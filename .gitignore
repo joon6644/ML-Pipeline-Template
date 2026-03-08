@@ -12,16 +12,23 @@ build/
 venv/
 env/
 
-# ===== 데이터 (대용량, Git 제외) =====
-data/raw/
-data/interim/
-data/processed/
+# ===== 데이터 (구조 유지, 내용물만 무시) =====
+data/**
+!data/**/
+!data/**/.gitkeep
 
-# ===== 학습된 모델 =====
-models/
+# ===== 학습된 모델 (구조 유지) =====
+models/**
+!models/
+!models/.gitkeep
 
-# ===== 결과물 =====
-results/
+# ===== 결과물 (구조 유지) =====
+results/**
+!results/
+!results/**/
+!results/**/.gitkeep
+results/*.log
+results/*.txt
 
 # ===== CatBoost 내부 로그 =====
 catboost_info/
@@ -29,12 +36,9 @@ catboost_info/
 # ===== Jupyter Notebook =====
 .ipynb_checkpoints/
 
-# ===== IDE =====
+# ===== IDE & OS =====
 .idea/
 .vscode/
 *.swp
-*.swo
-
-# ===== OS =====
 .DS_Store
 Thumbs.db
