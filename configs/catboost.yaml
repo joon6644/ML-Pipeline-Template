@@ -1,0 +1,141 @@
+# ============================================================
+#  CatBoost 전용 파이프라인 설정 파일
+#  - 이 파일 하나로 데이터·피처·모델·평가 전체를 통제합니다.
+#  - 프로젝트별로 이 파일을 복사하여 값만 수정해서 사용하세요.
+# ============================================================
+
+# ── 프로젝트 메타 ──────────────────────────────────────────────
+project:
+  name: "my_catboost_project"
+  seed: 42
+  task_type: "classification"          # classification | regression
+
+# ── 경로 설정 ──────────────────────────────────────────────────
+paths:
+  raw_data: "data/raw/train.csv"
+  processed_data: "data/processed/train_catboost.parquet"
+  interim_train: "data/interim/train.parquet"
+  interim_holdout: "data/interim/holdout.parquet"
+  test_data: "data/raw/test.csv"       # 테스트 데이터 (제출용, 없으면 비워두기)
+  model_dir: "models"
+  result_dir: "results"
+  figure_dir: "results/figures"
+  submission_dir: "results/submissions"
+
+# ── 데이터 설정 ────────────────────────────────────────────────
+data:
+  target_col: "target"                 # 타겟 변수명
+  id_col: "id"                         # ID 컬럼 (없으면 null)
+  separator: ","                       # CSV 구분자
+  encoding: "utf-8"                    # CSV 인코딩
+
+# ── 피처 엔지니어링 ───────────────────────────────────────────
+features:
+  # 학습에서 제외할 컬럼 (ID, 타겟은 자동 제외)
+  drop_cols:
+    - "index"
+
+  # 범주형 변수 목록 (CatBoost는 cat_features로 직접 전달)
+  cat_cols:
+    - "gender"
+    - "house_type"
+    - "income_type"
+    - "job_type"
+
+  # 수치형 변수 목록 (명시하지 않으면 나머지 전부 수치형 자동 판별)
+  num_cols:
+    - "age"
+    - "income_total"
+    - "days_employed"
+
+  # 결측치 처리 전략
+  missing:
+    numeric_strategy: "median"         # mean | median | zero | knn | iterative | drop
+    categorical_strategy: "mode"       # mode | constant | drop
+    fill_value: "MISSING"              # constant 선택 시 채울 값
+
+  # 불균형 데이터 처리 (훈련 데이터 변형)
+  imbalance:
+    method: "none"                     # none | smote
+
+  # sklearn 스케일링 (fit 시 mean_, scale_ 등이 자동 저장됨)
+  scaling:
+    method: "none"                     # standard | robust | minmax | none
+    cols: "auto"                       # auto = 수치형 전체, 또는 명시적 리스트
+
+  # 범주형 인코딩
+  encoding:
+    method: "none"                     # ordinal | label | target | none (CatBoost는 native 지원)
+    cols: "auto"                       # auto = cat_cols, 또는 명시적 리스트
+
+# ── 모델 학습 설정 ─────────────────────────────────────────────
+model:
+  algorithm: "catboost"
+  n_splits: 5                          # K-Fold 교차 검증 수
+  split_strategy: "stratified"         # stratified | kfold | group | timeseries
+  group_col: null                      # group 전략 시 사용할 컬럼명
+  shuffle: true                        # K-Fold 셔플 여부
+  early_stopping_rounds: 100           # 얼리스토핑 patience
+
+  # 고정 하이퍼파라미터 (Optuna 탐색 대상이 아닌 값)
+  fixed_params:
+    verbose: 100
+    task_type: "GPU"                   # GPU 가속 활성화 (없으면 CPU)
+    eval_metric: "Logloss"
+    auto_class_weights: "Balanced"     # None | Balanced | SqrtBalanced
+
+  # Optuna 하이퍼파라미터 탐색 범위
+  optuna:
+    enabled: true
+    n_trials: 50
+    timeout: null                      # 초 단위 시간 제한 (null = 무제한)
+    params:
+      iterations:      [500, 3000]     # [min, max]
+      depth:           [4, 10]
+      learning_rate:   [0.01, 0.3]     # log-uniform 탐색
+      l2_leaf_reg:     [1, 10]
+      bagging_temperature: [0.0, 1.0]
+      random_strength: [0.0, 10.0]
+      border_count:    [32, 255]
+
+# ── 평가 설정 ──────────────────────────────────────────────────
+evaluation:
+  # Optuna가 최적화할 목표 지표
+  optuna_target_metric: "logloss"      # logloss | auc | f1_macro | rmse | mae
+  optuna_direction: "minimize"         # minimize | maximize
+
+  # 최종 보고에 사용할 비즈니스 지표
+  report_metrics:
+    - "accuracy"
+    - "precision_macro"
+    - "recall_macro"
+    - "f1_macro"
+    - "f1_micro"
+    - "roc_auc"
+    - "pr_auc"
+    - "logloss"
+
+  # 이진 분류 임계값 튜닝
+  threshold_tuning:
+    enabled: true
+    metric: "f1_macro"                 # 임계값 최적화 기준 지표
+    search_range: [0.1, 0.9]
+    search_step: 0.01
+
+# ── 시각화 설정 ────────────────────────────────────────────────
+visualization:
+  confusion_matrix: true
+  feature_importance: true
+  roc_curve: true
+  pr_curve: true
+  calibration_curve: true
+  prediction_scatter: true
+  lift_gain_curve: true
+  shap_summary: true
+  shap_waterfall: true
+  shap_dependence: true
+  partial_dependence: true
+  shap_max_display: 20                 # SHAP plot에 표시할 최대 피처 수
+  shap_dependence_features: 5          # dependence plot top N features
+  pdp_features: 5                      # partial dependence plot top N features
+  dpi: 150                             # 저장 이미지 해상도

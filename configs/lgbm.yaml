@@ -1,0 +1,134 @@
+# ============================================================
+#  LightGBM 전용 파이프라인 설정 파일
+#  - catboost.yaml과 동일한 구조를 따릅니다.
+#  - 알고리즘·하이퍼파라미터만 LightGBM에 맞게 조정되어 있습니다.
+# ============================================================
+
+# ── 프로젝트 메타 ──────────────────────────────────────────────
+project:
+  name: "my_lgbm_project"
+  seed: 42
+  task_type: "classification"          # classification | regression
+
+# ── 경로 설정 ──────────────────────────────────────────────────
+paths:
+  raw_data: "data/raw/train.csv"
+  processed_data: "data/processed/train_lgbm.parquet"
+  interim_train: "data/interim/train.parquet"
+  interim_holdout: "data/interim/holdout.parquet"
+  test_data: "data/raw/test.csv"
+  model_dir: "models"
+  result_dir: "results"
+  figure_dir: "results/figures"
+  submission_dir: "results/submissions"
+
+# ── 데이터 설정 ────────────────────────────────────────────────
+data:
+  target_col: "target"
+  id_col: "id"
+  separator: ","
+  encoding: "utf-8"
+
+# ── 피처 엔지니어링 ───────────────────────────────────────────
+features:
+  drop_cols:
+    - "index"
+
+  cat_cols:
+    - "gender"
+    - "house_type"
+    - "income_type"
+    - "job_type"
+
+  num_cols:
+    - "age"
+    - "income_total"
+    - "days_employed"
+
+   missing:
+    numeric_strategy: "median"         # mean | median | zero | knn | iterative | drop
+    categorical_strategy: "mode"       # mode | constant | drop
+    fill_value: "MISSING"              # constant 선택 시 채울 값
+
+  imbalance:
+    method: "none"                     # none | smote
+
+  scaling:
+    method: "none"                     # standard | robust | minmax | none
+    cols: "auto"
+
+  encoding:
+    method: "none"                     # ordinal | target | none (LightGBM은 native 지원)
+    cols: "auto"
+
+# ── 모델 학습 설정 ─────────────────────────────────────────────
+model:
+  algorithm: "lightgbm"
+  n_splits: 5
+  split_strategy: "stratified"         # stratified | kfold | group | timeseries
+  group_col: null
+  shuffle: true
+  early_stopping_rounds: 100
+
+  # 고정 하이퍼파라미터
+  fixed_params:
+    verbose: -1
+    device_type: "gpu"                 # gpu | cpu (GPU 가속 활성화)
+    metric: "binary_logloss"           # binary_logloss | auc | multi_logloss | rmse
+    is_unbalance: true                 # 클래스 불균형 보정
+    boosting_type: "gbdt"              # gbdt | dart | rf
+
+  # Optuna 하이퍼파라미터 탐색 범위
+  optuna:
+    enabled: true
+    n_trials: 50
+    timeout: null
+    params:
+      n_estimators:     [500, 3000]
+      max_depth:        [4, 12]
+      learning_rate:    [0.01, 0.3]
+      num_leaves:       [20, 256]
+      min_child_samples: [5, 100]
+      reg_alpha:        [0.0, 10.0]
+      reg_lambda:       [0.0, 10.0]
+      subsample:        [0.5, 1.0]
+      colsample_bytree: [0.5, 1.0]
+
+# ── 평가 설정 ──────────────────────────────────────────────────
+evaluation:
+  optuna_target_metric: "logloss"
+  optuna_direction: "minimize"
+
+  report_metrics:
+    - "accuracy"
+    - "precision_macro"
+    - "recall_macro"
+    - "f1_macro"
+    - "f1_micro"
+    - "roc_auc"
+    - "pr_auc"
+    - "logloss"
+
+  threshold_tuning:
+    enabled: true
+    metric: "f1_macro"
+    search_range: [0.1, 0.9]
+    search_step: 0.01
+
+# ── 시각화 설정 ────────────────────────────────────────────────
+visualization:
+  confusion_matrix: true
+  feature_importance: true
+  roc_curve: true
+  pr_curve: true
+  calibration_curve: true
+  prediction_scatter: true
+  lift_gain_curve: true
+  shap_summary: true
+  shap_waterfall: true
+  shap_dependence: true
+  partial_dependence: true
+  shap_max_display: 20
+  shap_dependence_features: 5
+  pdp_features: 5
+  dpi: 150

@@ -1,0 +1,128 @@
+# ============================================================
+#  RandomForest 전용 파이프라인 설정 파일
+#  - catboost.yaml과 동일한 구조를 따릅니다.
+#  - sklearn RandomForest에 맞게 하이퍼파라미터를 조정합니다.
+#  - early_stopping 미지원 (Optuna CV로 overfitting 통제)
+# ============================================================
+
+# -- Project Meta --
+project:
+  name: "my_randomforest_project"
+  seed: 42
+  task_type: "classification"          # classification | regression
+
+# -- Paths --
+paths:
+  raw_data: "data/raw/train.csv"
+  processed_data: "data/processed/train_rf.parquet"
+  interim_train: "data/interim/train.parquet"
+  interim_holdout: "data/interim/holdout.parquet"
+  test_data: "data/raw/test.csv"
+  model_dir: "models"
+  result_dir: "results"
+  figure_dir: "results/figures"
+  submission_dir: "results/submissions"
+
+# -- Data --
+data:
+  target_col: "target"
+  id_col: "id"
+  separator: ","
+  encoding: "utf-8"
+
+# -- Feature Engineering --
+features:
+  drop_cols:
+    - "index"
+
+  cat_cols:
+    - "gender"
+    - "house_type"
+    - "income_type"
+    - "job_type"
+
+  num_cols:
+    - "age"
+    - "income_total"
+    - "days_employed"
+
+  missing:
+    numeric_strategy: "median"         # mean | median | zero | knn | iterative | drop
+    categorical_strategy: "mode"       # mode | constant | drop
+    fill_value: "MISSING"              # constant 선택 시 채울 값
+
+  imbalance:
+    method: "none"                     # none | smote
+
+  scaling:
+    method: "none"                     # standard | robust | minmax | none
+    cols: "auto"
+
+  encoding:
+    method: "ordinal"                  # ordinal | label | target | none
+    cols: "auto"
+
+# -- Model --
+model:
+  algorithm: "randomforest"
+  n_splits: 5
+  split_strategy: "stratified"         # stratified | kfold | group | timeseries
+  group_col: null
+  shuffle: true
+  early_stopping_rounds: 0             # RF는 early_stopping 미지원
+
+  # Fixed hyperparameters
+  fixed_params:
+    n_jobs: -1
+    class_weight: "balanced"           # None | balanced | balanced_subsample
+    bootstrap: true
+
+  # Optuna search ranges
+  optuna:
+    enabled: true
+    n_trials: 50
+    timeout: null
+    params:
+      n_estimators:     [100, 2000]
+      max_depth:        [4, 30]
+      min_samples_split: [2, 20]
+      min_samples_leaf: [1, 10]
+      max_features:     ["sqrt", "log2", 0.3, 0.5, 0.7, 1.0]  # categorical choice
+
+# -- Evaluation --
+evaluation:
+  optuna_target_metric: "f1_macro"
+  optuna_direction: "maximize"
+
+  report_metrics:
+    - "accuracy"
+    - "precision_macro"
+    - "recall_macro"
+    - "f1_macro"
+    - "f1_micro"
+    - "auc"
+    - "logloss"
+
+  threshold_tuning:
+    enabled: true
+    metric: "f1_macro"
+    search_range: [0.1, 0.9]
+    search_step: 0.01
+
+# -- Visualization --
+visualization:
+  confusion_matrix: true
+  feature_importance: true
+  roc_curve: true
+  pr_curve: true
+  calibration_curve: true
+  prediction_scatter: true
+  lift_gain_curve: true
+  shap_summary: true
+  shap_waterfall: true
+  shap_dependence: true
+  partial_dependence: true
+  shap_max_display: 20
+  shap_dependence_features: 5          # dependence plot top N features
+  pdp_features: 5
+  dpi: 150

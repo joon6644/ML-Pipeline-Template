@@ -1,0 +1,134 @@
+# ============================================================
+#  XGBoost 전용 파이프라인 설정 파일
+#  - catboost.yaml과 동일한 구조를 따릅니다.
+#  - XGBoost에 맞는 하이퍼파라미터를 설정합니다.
+# ============================================================
+
+# -- Project Meta --
+project:
+  name: "my_xgboost_project"
+  seed: 42
+  task_type: "classification"          # classification | regression
+
+# -- Paths --
+paths:
+  raw_data: "data/raw/train.csv"
+  processed_data: "data/processed/train_xgb.parquet"
+  interim_train: "data/interim/train.parquet"
+  interim_holdout: "data/interim/holdout.parquet"
+  test_data: "data/raw/test.csv"
+  model_dir: "models"
+  result_dir: "results"
+  figure_dir: "results/figures"
+  submission_dir: "results/submissions"
+
+# -- Data --
+data:
+  target_col: "target"
+  id_col: "id"
+  separator: ","
+  encoding: "utf-8"
+
+# -- Feature Engineering --
+features:
+  drop_cols:
+    - "index"
+
+  cat_cols:
+    - "gender"
+    - "house_type"
+    - "income_type"
+    - "job_type"
+
+  num_cols:
+    - "age"
+    - "income_total"
+    - "days_employed"
+  # 결측치 처리 전략
+  missing:
+    numeric_strategy: "median"         # mean | median | zero | knn | iterative | drop
+    categorical_strategy: "mode"       # mode | constant | drop
+    fill_value: "MISSING"              # constant 선택 시 채울 값
+
+  # 불균형 데이터 처리 (훈련 데이터 변형)
+  imbalance:
+    method: "none"                     # none | smote
+  scaling:
+    method: "none"                     # standard | robust | minmax | none
+    cols: "auto"
+
+  encoding:
+    method: "ordinal"                  # ordinal | label | target | none
+    cols: "auto"
+
+# -- Model --
+model:
+  algorithm: "xgboost"
+  n_splits: 5
+  split_strategy: "stratified"         # stratified | kfold | group | timeseries
+  group_col: null
+  shuffle: true
+  early_stopping_rounds: 100
+
+  # Fixed hyperparameters
+  fixed_params:
+    verbosity: 0
+    tree_method: "hist"                # GPU 가속을 위해 hist 권장
+    device: "cuda"                     # GPU 가속 활성화
+    eval_metric: "logloss"             # logloss | auc | mlogloss | rmse
+    enable_categorical: true           # XGBoost native categorical support
+    booster: "gbtree"                  # gbtree | dart
+
+  # Optuna search ranges
+  optuna:
+    enabled: true
+    n_trials: 50
+    timeout: null
+    params:
+      n_estimators:     [500, 3000]
+      max_depth:        [3, 10]
+      learning_rate:    [0.01, 0.3]
+      min_child_weight: [1, 10]
+      gamma:            [0.0, 5.0]
+      subsample:        [0.5, 1.0]
+      colsample_bytree: [0.5, 1.0]
+      reg_alpha:        [0.0, 10.0]
+      reg_lambda:       [0.0, 10.0]
+
+# -- Evaluation --
+evaluation:
+  optuna_target_metric: "logloss"
+  optuna_direction: "minimize"
+
+  report_metrics:
+    - "accuracy"
+    - "precision_macro"
+    - "recall_macro"
+    - "f1_macro"
+    - "f1_micro"
+    - "auc"
+    - "logloss"
+
+  threshold_tuning:
+    enabled: true
+    metric: "f1_macro"
+    search_range: [0.1, 0.9]
+    search_step: 0.01
+
+# -- Visualization --
+visualization:
+  confusion_matrix: true
+  feature_importance: true
+  roc_curve: true
+  pr_curve: true
+  calibration_curve: true
+  prediction_scatter: true
+  lift_gain_curve: true
+  shap_summary: true
+  shap_waterfall: true
+  shap_dependence: true
+  partial_dependence: true
+  shap_max_display: 20                 # SHAP plot에 표시할 최대 피처 수
+  shap_dependence_features: 5          # dependence plot top N features
+  pdp_features: 5                      # partial dependence plot top N features
+  dpi: 150                             # 저장 이미지 해상도

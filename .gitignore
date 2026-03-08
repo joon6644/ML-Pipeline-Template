@@ -1,0 +1,40 @@
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+
+# ===== 가상환경 =====
+.venv/
+venv/
+env/
+
+# ===== 데이터 (대용량, Git 제외) =====
+data/raw/
+data/interim/
+data/processed/
+
+# ===== 학습된 모델 =====
+models/
+
+# ===== 결과물 =====
+results/
+
+# ===== CatBoost 내부 로그 =====
+catboost_info/
+
+# ===== Jupyter Notebook =====
+.ipynb_checkpoints/
+
+# ===== IDE =====
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# ===== OS =====
+.DS_Store
+Thumbs.db
