@@ -86,8 +86,8 @@ model:
 
   # Optuna 하이퍼파라미터 탐색 범위
   optuna:
-    enabled: true
-    n_trials: 50
+    enabled: true                      # optuna 작동
+    n_trials: 30
     timeout: null                      # 초 단위 시간 제한 (null = 무제한)
     params:
       iterations:      [500, 3000]     # [min, max]
@@ -132,9 +132,9 @@ visualization:
   prediction_scatter: true
   lift_gain_curve: true
   shap_summary: true
-  shap_waterfall: true
-  shap_dependence: true
-  partial_dependence: true
+  shap_waterfall: false
+  shap_dependence: false
+  partial_dependence: false
   shap_max_display: 20                 # SHAP plot에 표시할 최대 피처 수
   shap_dependence_features: 5          # dependence plot top N features
   pdp_features: 5                      # partial dependence plot top N features

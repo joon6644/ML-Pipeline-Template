@@ -264,5 +264,3 @@ python -m src.ensemble --data data/raw/test.csv \\
                        --output results/submissions/my_ensemble_sub.csv
 ```
 * **주의**: 앙상블 스크립트는 내부적으로 `--dp` 플래그를 통해 `models/data_preprocessor.pkl`를 로드하여 새로운 CSV 파일에 파이프라인의 훈련 통계량(결측치, 스케일링, 인코딩)을 동일하게 자동 변환시켜 적용합니다.
-#   M L - P i p e l i n e - T e m p l a t e  
- 
