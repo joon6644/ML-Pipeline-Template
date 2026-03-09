@@ -98,6 +98,42 @@ class DataPreprocessor:
         module = importlib.import_module(module_path)
         return getattr(module, class_name)
 
+    @staticmethod
+    def _validate_cols(cols: list[str], df: pd.DataFrame, context: str) -> list[str]:
+        """사용자가 지정한 컬럼명이 실제 데이터에 존재하는지 검증합니다.
+
+        존재하지 않는 컬럼이 하나라도 있으면 ValueError를 발생시켜,
+        오타나 삭제된 컬럼으로 인한 '조용한 실패'를 사전에 차단합니다.
+
+        Args:
+            cols: YAML에서 사용자가 지정한 컬럼명 리스트
+            df: 실제 데이터 DataFrame
+            context: 에러 메시지에 표시할 맥락 (예: "scaling", "encoding")
+
+        Returns:
+            검증 통과된 컬럼명 리스트 (입력과 동일)
+
+        Raises:
+            ValueError: 존재하지 않는 컬럼이 포함된 경우
+        """
+        missing = [c for c in cols if c not in df.columns]
+        if missing:
+            available = sorted(df.columns.tolist())
+            raise ValueError(
+                f"\n╔══════════════════════════════════════════════════════╗\n"
+                f"║  ❌ [{context}] 존재하지 않는 컬럼이 지정되었습니다!  ║\n"
+                f"╚══════════════════════════════════════════════════════╝\n"
+                f"  지정된 컬럼 중 데이터에 없는 항목:\n"
+                f"    → {missing}\n\n"
+                f"  현재 데이터에 존재하는 컬럼 목록:\n"
+                f"    → {available}\n\n"
+                f"  💡 해결 방법:\n"
+                f"    1) YAML의 {context} > cols 항목에서 오타를 확인하세요.\n"
+                f"    2) 해당 컬럼이 drop_cols에 의해 제거되었는지 확인하세요.\n"
+                f"    3) 모든 수치형/범주형 컬럼에 자동 적용하려면 cols: \"auto\"로 설정하세요.\n"
+            )
+        return cols
+
     def _resolve_scaler_cols(self, df: pd.DataFrame) -> list[str]:
         """스케일링 대상 컬럼을 결정합니다."""
         cols = self._scaling_cfg.get("cols", "auto")
@@ -105,14 +141,16 @@ class DataPreprocessor:
         if cols == "auto" or cols is None:
             return [c for c in df.select_dtypes(include=[np.number]).columns 
                     if c != target_col]
-        return [c for c in cols if c in df.columns]
+        # 사용자가 직접 지정한 컬럼 → 검증 후 반환
+        return self._validate_cols(list(cols), df, "scaling(스케일링)")
 
     def _resolve_encoder_cols(self, df: pd.DataFrame) -> list[str]:
         """인코딩 대상 컬럼을 결정합니다."""
         cols = self._encoding_cfg.get("cols", "auto")
         if cols == "auto" or cols is None:
             return [c for c in self._feat_cfg["cat_cols"] if c in df.columns]
-        return [c for c in cols if c in df.columns]
+        # 사용자가 직접 지정한 컬럼 → 검증 후 반환
+        return self._validate_cols(list(cols), df, "encoding(인코딩)")
 
     def fit(self, df: pd.DataFrame, y: pd.Series | None = None) -> "DataPreprocessor":
         """훈련 데이터의 통계량을 계산하고 sklearn 변환기를 학습합니다.
@@ -314,6 +352,9 @@ class DataPreprocessor:
     def fit_transform(self, df: pd.DataFrame, y: pd.Series | None = None) -> pd.DataFrame:
         """fit()과 transform()을 연속으로 수행합니다.
         
+        ⚠️ YAML의 enable_system_preprocessing이 false이면
+           결측치/스케일링/인코딩을 모두 건너뛰고 원본을 그대로 반환합니다.
+        
         Args:
             df: **훈련 데이터** DataFrame
             y: **타겟 데이터** Series (Target Encoding 사용 시 필수)
@@ -321,6 +362,11 @@ class DataPreprocessor:
         Returns:
             변환된 DataFrame
         """
+        enable_system = self._feat_cfg.get("enable_system_preprocessing", True)
+        if not enable_system:
+            logger.info("⏭️ 시스템 자동 전처리 건너뜀 (enable_system_preprocessing: false)")
+            self._is_fitted = True
+            return df
         return self.fit(df, y).transform(df)
 
     @property
@@ -365,33 +411,137 @@ def get_feature_names(config: dict, df: pd.DataFrame) -> list[str]:
 
 
 # ═══════════════════════════════════════════════════════════════
-#  불균형 데이터 처리 (SMOTE)
+#  불균형 데이터 처리 (리샘플링)
 # ═══════════════════════════════════════════════════════════════
-def apply_smote(
-    X: pd.DataFrame, 
-    y: pd.Series, 
+
+# 지원하는 리샘플러 매핑
+_RESAMPLER_MAP = {
+    # ── 오버샘플링 (소수 클래스 복제/합성) ──
+    "smote":            "imblearn.over_sampling.SMOTE",
+    "adasyn":           "imblearn.over_sampling.ADASYN",
+    "borderline_smote": "imblearn.over_sampling.BorderlineSMOTE",
+    "random_over":      "imblearn.over_sampling.RandomOverSampler",
+    # ── 언더샘플링 (다수 클래스 축소) ──
+    "random_under":     "imblearn.under_sampling.RandomUnderSampler",
+    "tomek":            "imblearn.under_sampling.TomekLinks",
+    "enn":              "imblearn.under_sampling.EditedNearestNeighbours",
+    # ── 복합 (오버 + 언더 결합) ──
+    "smote_tomek":      "imblearn.combine.SMOTETomek",
+    "smote_enn":        "imblearn.combine.SMOTEENN",
+}
+
+
+def _import_resampler(dotted_path: str):
+    """문자열 경로에서 리샘플러 클래스를 동적 임포트합니다."""
+    module_path, class_name = dotted_path.rsplit(".", 1)
+    import importlib
+    module = importlib.import_module(module_path)
+    return getattr(module, class_name)
+
+
+def apply_resampling(
+    X: pd.DataFrame,
+    y: pd.Series,
     config: dict
 ) -> tuple[pd.DataFrame, pd.Series]:
-    """훈련 데이터의 클래스 불균형을 해소하기 위해 SMOTE를 적용합니다.
-    검증 데이터나 테스트 데이터에는 적용하지 마세요.
+    """훈련 데이터의 클래스 불균형을 해소하기 위해 리샘플링을 적용합니다.
+
+    ⚠️ 반드시 훈련 데이터에만 적용하세요. 검증/테스트 데이터에 적용하면
+       데이터 누수가 발생합니다.
+
+    YAML 설정 예시::
+
+        features:
+          imbalance:
+            method: "smote"              # 리샘플링 방법
+            sampling_strategy: "auto"    # 복제 비율
+
+    지원 방법:
+        - none            : 사용 안 함
+        - smote           : SMOTE (합성 소수 오버샘플링)
+        - adasyn          : ADASYN (적응적 합성 오버샘플링)
+        - borderline_smote: Borderline-SMOTE (경계 영역 집중)
+        - random_over     : 랜덤 오버샘플링 (단순 복제)
+        - random_under    : 랜덤 언더샘플링 (다수 클래스 축소)
+        - tomek           : Tomek Links (경계 노이즈 제거)
+        - enn             : ENN (편집 최근접 이웃 언더샘플링)
+        - smote_tomek     : SMOTE + Tomek (합성 후 노이즈 제거)
+        - smote_enn       : SMOTE + ENN (합성 후 이웃 정리)
+
+    sampling_strategy 옵션:
+        - "auto"   : 소수 클래스를 다수 클래스와 동일 수준으로 (기본)
+        - "minority": 소수 클래스만 리샘플링
+        - "not majority": 다수 클래스 제외 모두 리샘플링
+        - 0.5      : 소수/다수 비율을 50%로 맞춤 (예: 소수 5000개, 다수 10000개)
+        - 1.0      : 소수/다수 비율을 100%로 (= "auto"와 동일)
     """
     imbalance_cfg = config.get("features", {}).get("imbalance", {})
     method = imbalance_cfg.get("method", "none")
-    
-    if method == "smote":
+
+    if method == "none" or method is None:
+        return X, y
+
+    if method not in _RESAMPLER_MAP:
+        available = list(_RESAMPLER_MAP.keys())
+        raise ValueError(
+            f"\n╔══════════════════════════════════════════════════════╗\n"
+            f"║  ❌ 지원하지 않는 불균형 처리 방법입니다!             ║\n"
+            f"╚══════════════════════════════════════════════════════╝\n"
+            f"  입력값: '{method}'\n"
+            f"  사용 가능한 방법: {available}\n"
+        )
+
+    seed = config.get("project", {}).get("seed", 42)
+    sampling_strategy = imbalance_cfg.get("sampling_strategy", "auto")
+
+    # 숫자형 문자열 → float 변환 (YAML에서 "0.5"로 입력될 수 있음)
+    if isinstance(sampling_strategy, str):
         try:
-            from imblearn.over_sampling import SMOTE
-            logger.info("  [SMOTE] 훈련 데이터에 SMOTE 적용 중...")
-            seed = config.get("project", {}).get("seed", 42)
-            smote = SMOTE(random_state=seed)
-            X_resampled, y_resampled = smote.fit_resample(X, y)
-            logger.info(f"  [SMOTE] 적용 후 데이터: {X_resampled.shape} (기존 {X.shape})")
-            return X_resampled, pd.Series(y_resampled, name=y.name)
-        except ImportError:
-            logger.warning("imblearn 패키지가 없어 SMOTE를 건너뜁니다. (pip install imbalanced-learn)")
-            return X, y
-    
-    return X, y
+            sampling_strategy = float(sampling_strategy)
+        except ValueError:
+            pass  # "auto", "minority" 등 문자열 그대로 사용
+
+    try:
+        ResamplerClass = _import_resampler(_RESAMPLER_MAP[method])
+
+        # 리샘플러별 지원 파라미터가 다르므로 안전하게 구성
+        kwargs = {}
+        import inspect
+        sig = inspect.signature(ResamplerClass.__init__)
+        if "sampling_strategy" in sig.parameters:
+            kwargs["sampling_strategy"] = sampling_strategy
+        if "random_state" in sig.parameters:
+            kwargs["random_state"] = seed
+
+        resampler = ResamplerClass(**kwargs)
+
+        logger.info(
+            f"  [{method.upper()}] 훈련 데이터 리샘플링 적용 중... "
+            f"(sampling_strategy={sampling_strategy})"
+        )
+        logger.info(f"  적용 전 클래스 분포:\n{y.value_counts().to_string()}")
+
+        X_resampled, y_resampled = resampler.fit_resample(X, y)
+
+        logger.info(
+            f"  [{method.upper()}] 적용 후 데이터: {X_resampled.shape} "
+            f"(기존 {X.shape})"
+        )
+        y_resampled = pd.Series(y_resampled, name=y.name)
+        logger.info(f"  적용 후 클래스 분포:\n{y_resampled.value_counts().to_string()}")
+
+        return X_resampled, y_resampled
+
+    except ImportError:
+        logger.warning(
+            f"imblearn 패키지가 없어 {method}를 건너뜁니다. "
+            f"(pip install imbalanced-learn)"
+        )
+        return X, y
+
+
+# 하위 호환성: 기존 코드에서 apply_smote() 호출 시 동작 보장
+apply_smote = apply_resampling
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -420,30 +570,44 @@ def load_raw_data(config: dict) -> pd.DataFrame:
 
 
 # ═══════════════════════════════════════════════════════════════
-#  2. 안전한 전처리 (누수 없는 작업만)
+#  2. 안전한 전처리 (시스템 자동 + 사용자 커스텀)
 # ═══════════════════════════════════════════════════════════════
+#  ⭐ 사용자 정의 전처리는 src/custom_preprocessor.py 에서 수정하세요!
+#     이 파일(preprocessor.py)은 시스템 자동 처리 전용입니다.
+# ═══════════════════════════════════════════════════════════════
+from src.custom_preprocessor import custom_safe_preprocess, custom_engineer_features
+
+
 def safe_preprocess(df: pd.DataFrame, config: dict) -> pd.DataFrame:
-    """데이터 누수가 발생하지 않는 전처리만 수행합니다.
+    """데이터 누수가 없는 전처리를 수행합니다.
     
-    - 불필요 컬럼 제거
-    - 범주형 타입 변환
-    - (결측치 처리는 여기서 하지 않음 → DataPreprocessor에서 처리)
+    실행 순서:
+        1) 사용자 정의 안전 전처리 (custom_preprocessor.py)
+        2) 시스템 자동 컬럼 제거 (YAML 설정 기반)
     
     Args:
         df: 원본 DataFrame
         config: 전체 설정 dict
     
     Returns:
-        컬럼 정리된 DataFrame
+        정리된 DataFrame
     """
     df = df.copy()
     feat_cfg = get_feature_config(config)
+
+    # ── 1단계: 사용자 정의 안전 전처리 (custom_preprocessor.py) ──
+    enable_custom = feat_cfg.get("enable_custom_preprocessing", True)
+    if enable_custom:
+        df = custom_safe_preprocess(df, config)
+    else:
+        logger.info("⏭️ 사용자 정의 전처리 건너뜀 (enable_custom_preprocessing: false)")
+
+    # ── 2단계: 시스템 자동 컬럼 제거 (YAML의 drop_cols 기반) ──
     drop_cols = feat_cfg["drop_cols"]
 
-    # ── 컬럼 제거 ──
     cols_to_drop = [c for c in drop_cols if c in df.columns]
     if cols_to_drop:
-        logger.info(f"컬럼 제거: {cols_to_drop}")
+        logger.info(f"시스템 컬럼 제거: {cols_to_drop}")
         df.drop(columns=cols_to_drop, inplace=True)
 
     logger.info(f"안전한 전처리 완료 — shape: {df.shape}")
@@ -451,18 +615,13 @@ def safe_preprocess(df: pd.DataFrame, config: dict) -> pd.DataFrame:
 
 
 # ═══════════════════════════════════════════════════════════════
-#  3. 피처 엔지니어링 (사용자 커스텀 확장 가능)
+#  3. 피처 엔지니어링 (사용자 커스텀 → custom_preprocessor.py)
 # ═══════════════════════════════════════════════════════════════
 def engineer_features(df: pd.DataFrame, config: dict) -> pd.DataFrame:
     """파생변수를 생성합니다.
     
-    이 함수는 프로젝트에 맞게 사용자가 직접 수정하는 영역입니다.
-    아래 예시 코드를 참고하여 필요한 변환을 추가하세요.
-    
-    ⚠️ 주의: 여기에 추가하는 변환은 데이터 누수가 없는 작업만 넣으세요.
-    (예: 컬럼 간 사칙연산, 로그변환, 범주 조합 등)
-    훈련 데이터의 통계량(mean, std 등)을 사용하는 변환은
-    DataPreprocessor 클래스에 추가하세요.
+    ⭐ 실제 파생변수 코딩은 src/custom_preprocessor.py 에서 수정하세요!
+       이 함수는 custom_preprocessor의 함수를 호출하는 래퍼(wrapper)입니다.
     
     Args:
         df: 정제된 DataFrame
@@ -471,26 +630,13 @@ def engineer_features(df: pd.DataFrame, config: dict) -> pd.DataFrame:
     Returns:
         피처가 추가된 DataFrame
     """
-    df = df.copy()
-
-    # ────────────────────────────────────────
-    #  💡 여기에 프로젝트별 파생변수를 추가하세요
-    # ────────────────────────────────────────
-    # 예시 1) 수치형 변수 비율 파생변수
-    # if "income_total" in df.columns and "age" in df.columns:
-    #     df["income_per_age"] = df["income_total"] / (df["age"] + 1)
-    #
-    # 예시 2) 범주형 조합 파생변수
-    # if "gender" in df.columns and "income_type" in df.columns:
-    #     df["gender_income"] = df["gender"] + "_" + df["income_type"]
-    #
-    # 예시 3) 로그 변환
-    # if "income_total" in df.columns:
-    #     df["log_income"] = np.log1p(df["income_total"])
-    # ────────────────────────────────────────
-
-    logger.info(f"피처 엔지니어링 완료 — 최종 shape: {df.shape}")
-    return df
+    feat_cfg = get_feature_config(config)
+    enable_custom = feat_cfg.get("enable_custom_preprocessing", True)
+    if enable_custom:
+        return custom_engineer_features(df, config)
+    else:
+        logger.info("⏭️ 사용자 정의 피처 엔지니어링 건너뜀 (enable_custom_preprocessing: false)")
+        return df
 
 
 # ═══════════════════════════════════════════════════════════════

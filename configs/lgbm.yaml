@@ -1,134 +1,371 @@
-# ============================================================
-#  LightGBM 전용 파이프라인 설정 파일
-#  - catboost.yaml과 동일한 구조를 따릅니다.
-#  - 알고리즘·하이퍼파라미터만 LightGBM에 맞게 조정되어 있습니다.
-# ============================================================
+# ╔══════════════════════════════════════════════════════════════╗
+# ║  📋  LightGBM 파이프라인 설정 가이드                         ║
+# ║  위에서부터 순서대로 항목을 확인하며 값을 채워주세요            ║
+# ╚══════════════════════════════════════════════════════════════╝
 
-# ── 프로젝트 메타 ──────────────────────────────────────────────
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  STEP 1.  프로젝트 기본 정보
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 project:
-  name: "my_lgbm_project"
-  seed: 42
-  task_type: "classification"          # classification | regression
 
-# ── 경로 설정 ──────────────────────────────────────────────────
+  # Q1. 프로젝트 이름 (결과 파일·로그에 표시됩니다)
+  name: "my_lgbm_project"
+
+  # Q2. 랜덤 시드 (재현성을 위해 고정)
+  seed: 42
+
+  # Q3. 어떤 문제를 풀고 있나요?
+  #     → classification : 분류 (이진 · 다중 모두 포함)
+  #     → regression     : 회귀 (연속값 예측)
+  task_type: "classification"
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  STEP 2.  데이터 경로
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 paths:
+
+  # Q4. 훈련 데이터 파일 경로
   raw_data: "data/raw/train.csv"
+
+  # Q5. 전처리 후 저장할 경로 (자동 생성됩니다)
   processed_data: "data/processed/train_lgbm.parquet"
+
+  # Q6. K-Fold 분할 저장 경로
   interim_train: "data/interim/train.parquet"
   interim_holdout: "data/interim/holdout.parquet"
+
+  # Q7. 테스트 데이터 경로 (제출용, 없으면 비워두세요)
   test_data: "data/raw/test.csv"
+
+  # Q8. 결과물 저장 폴더들
   model_dir: "models"
   result_dir: "results"
   figure_dir: "results/figures"
   submission_dir: "results/submissions"
 
-# ── 데이터 설정 ────────────────────────────────────────────────
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  STEP 3.  타겟 · 컬럼 설정
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 data:
+
+  # Q9. 예측할 타겟 변수의 컬럼명
   target_col: "target"
+
+  # Q10. ID 컬럼명 (없으면 null)
   id_col: "id"
+
+  # Q11. CSV 구분자
   separator: ","
+
+  # Q12. CSV 파일 인코딩
   encoding: "utf-8"
 
-# ── 피처 엔지니어링 ───────────────────────────────────────────
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  STEP 4.  피처(변수) 설정
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 features:
+
+  # Q13. 학습에서 제외할 컬럼 (ID · 타겟은 자동 제외됩니다)
   drop_cols:
     - "index"
 
+  # Q14. 범주형(카테고리) 변수 목록
+  #      LightGBM은 범주형을 직접 처리하므로 정확히 지정해주세요
   cat_cols:
     - "gender"
     - "house_type"
     - "income_type"
     - "job_type"
 
+  # Q15. 수치형 변수 목록 (비워두면 나머지를 자동으로 수치형 판별)
   num_cols:
     - "age"
     - "income_total"
     - "days_employed"
 
-   missing:
-    numeric_strategy: "median"         # mean | median | zero | knn | iterative | drop
-    categorical_strategy: "mode"       # mode | constant | drop
-    fill_value: "MISSING"              # constant 선택 시 채울 값
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  STEP 4.5  전처리 실행 스위치 (On/Off)
+#            이미 전처리가 끝난 데이터를 불러올 때는 false로 꺼두세요
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  # ── [A] 사용자 정의 전처리 (custom_preprocessor.py) ──
+  # Q15-1. 사용자가 직접 짠 전처리 코드 실행 여부
+  #        (이상치 제거, 파생변수 생성 등 custom_preprocessor.py 안의 함수)
+  #        → true  : custom_preprocessor.py의 코드를 실행합니다 (기본값)
+  #        → false : 사용자 전처리를 건너뜁니다 (이미 가공된 데이터를 쓸 때)
+  enable_custom_preprocessing: true
+
+  # ── [B] 시스템 자동 전처리 (결측치 · 스케일링 · 인코딩) ──
+  # Q15-2. YAML 설정 기반 자동 전처리 실행 여부
+  #        (결측치 채우기, 스케일링, 범주형 인코딩 등 DataPreprocessor가 수행)
+  #        → true  : 아래 STEP 5~8의 설정에 따라 자동 전처리합니다 (기본값)
+  #        → false : 시스템 전처리를 통째로 건너뜁니다
+  #                  (이미 결측치·스케일링·인코딩이 모두 완료된 데이터를 쓸 때)
+  enable_system_preprocessing: true
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  STEP 5.  결측치 처리
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  missing:
+
+    # Q16. 수치형 결측치를 어떻게 채울까요?
+    #      → median    : 중앙값 (이상치에 강함, 기본 권장)
+    #      → mean      : 평균값
+    #      → zero      : 0으로 채움
+    #      → knn       : KNN으로 유사 샘플 기반 추정
+    #      → iterative : 다른 변수를 이용한 반복 추정
+    #      → drop      : 결측 행 삭제
+    numeric_strategy: "median"
+
+    # Q17. 범주형 결측치를 어떻게 채울까요?
+    #      → mode     : 최빈값 (가장 흔한 값)
+    #      → constant : 지정한 값으로 채움 (아래 fill_value)
+    #      → drop     : 결측 행 삭제
+    categorical_strategy: "mode"
+
+    # Q18. constant 선택 시 채울 값
+    fill_value: "MISSING"
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  STEP 6.  클래스 불균형 처리
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   imbalance:
-    method: "none"                     # none | smote
 
+    # Q19. 불균형 데이터 보정 방법
+    #      ── 오버샘플링 (소수 클래스를 늘림) ──
+    #      → none            : 사용 안 함 (LightGBM은 is_unbalance로 대체 가능)
+    #      → smote           : SMOTE — 합성 소수 오버샘플링 (가장 대표적)
+    #      → adasyn          : ADASYN — 분류가 어려운 영역에 집중 합성
+    #      → borderline_smote: 경계 영역 샘플에만 SMOTE 적용
+    #      → random_over     : 단순 랜덤 복제 (빠르지만 과적합 위험)
+    #      ── 언더샘플링 (다수 클래스를 줄임) ──
+    #      → random_under    : 다수 클래스를 랜덤 삭제
+    #      → tomek           : Tomek Links — 경계 노이즈 샘플 제거
+    #      → enn             : ENN — 이웃 투표로 노이즈 제거
+    #      ── 복합 (오버 + 언더 동시) ──
+    #      → smote_tomek     : SMOTE 후 Tomek Links 정리 (권장)
+    #      → smote_enn       : SMOTE 후 ENN 정리
+    method: "none"
+
+    # Q20. 리샘플링 비율 (얼마나 복제/축소할 것인가?)
+    #      → "auto" : 1:1 | 0.5 : 50% | 0.3 : 30% | "minority" | "not majority"
+    #      ※ 무조건 1:1이 최선은 아닙니다. 0.3~0.5가 과적합 없이 더 나을 수 있습니다
+    sampling_strategy: "auto"
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  STEP 7.  스케일링 (수치형 정규화)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   scaling:
-    method: "none"                     # standard | robust | minmax | none
+
+    # Q20. 스케일링 방법 (트리 모델은 보통 불필요)
+    #      → none     : 사용 안 함 (LightGBM 기본 권장)
+    #      → standard : 평균 0, 분산 1로 정규화
+    #      → robust   : 중앙값 기준 정규화 (이상치에 강함)
+    #      → minmax   : 0~1 범위로 축소
+    method: "none"
+
+    # Q21. 스케일링 대상 컬럼
+    #      → auto : 수치형 전체 자동 선택
+    #      → 직접 지정 예시:
+    #        cols:
+    #          - "age"
+    #          - "income_total"
+    #      ※ 존재하지 않는 컬럼명 입력 시 에러가 발생합니다
     cols: "auto"
 
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  STEP 8.  범주형 인코딩
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   encoding:
-    method: "none"                     # ordinal | target | none (LightGBM은 native 지원)
+
+    # Q22. 범주형 인코딩 방법
+    #      → none    : 사용 안 함 (LightGBM은 자체 처리하므로 none 권장)
+    #      → ordinal : 순서형 숫자로 변환 (0, 1, 2, ...)
+    #      → label   : 라벨 인코딩
+    #      → target  : 타겟 평균값으로 변환 (category_encoders 필요)
+    method: "none"
+
+    # Q23. 인코딩 대상 컬럼
+    #      → auto : cat_cols 전체 자동 선택
+    #      → 직접 지정 예시:
+    #        cols:
+    #          - "gender"
+    #          - "house_type"
+    #      ※ 존재하지 않는 컬럼명 입력 시 에러가 발생합니다
     cols: "auto"
 
-# ── 모델 학습 설정 ─────────────────────────────────────────────
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  STEP 9.  모델 학습 기본 설정
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 model:
+
+  # ※ 이 파일은 LightGBM 전용입니다 (변경 불필요)
   algorithm: "lightgbm"
+
+  # Q24. K-Fold 교차검증 수 (보통 5 또는 10)
   n_splits: 5
-  split_strategy: "stratified"         # stratified | kfold | group | timeseries
+
+  # Q25. 데이터 분할 전략
+  #      → stratified  : 클래스 비율 유지 (분류 기본 권장)
+  #      → kfold       : 단순 랜덤 분할
+  #      → group       : 특정 그룹 단위 분할 (group_col 필요)
+  #      → timeseries  : 시계열 순서 유지 분할
+  split_strategy: "stratified"
+
+  # Q26. group 전략 시 그룹으로 사용할 컬럼 (그 외엔 null)
   group_col: null
+
+  # Q27. K-Fold 셔플 여부
   shuffle: true
+
+  # Q28. 얼리스토핑 patience (검증 성능이 안 오르면 학습 중단)
+  #      0으로 설정 시 얼리스토핑 미사용
   early_stopping_rounds: 100
 
-  # 고정 하이퍼파라미터
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  STEP 10. LightGBM 고정 하이퍼파라미터
+#           (Optuna 탐색 대상이 아닌 값)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   fixed_params:
+
+    # Q29. 학습 로그 출력 (-1이면 무출력)
     verbose: -1
-    device_type: "gpu"                 # gpu | cpu (GPU 가속 활성화)
-    metric: "binary_logloss"           # binary_logloss | auc | multi_logloss | rmse
-    is_unbalance: true                 # 클래스 불균형 보정
-    boosting_type: "gbdt"              # gbdt | dart | rf
 
-  # Optuna 하이퍼파라미터 탐색 범위
+    # Q30. 연산 장치
+    #      → gpu : GPU 가속
+    #      → cpu : CPU 사용
+    device_type: "gpu"
+
+    # Q31. 목적 함수
+    #      [이진분류]  binary (기본)
+    #                 focal (불균형 극심할 때 추천 — 어려운 샘플 집중 학습)
+    #      [다중분류]  multiclass | multiclassova
+    #      [회귀]      regression | regression_l1 | huber | fair | poisson
+    objective: "binary"
+
+    # Q32. 평가 지표 (학습 중 모니터링)
+    #      [이진분류]  binary_logloss | auc | binary_error
+    #      [다중분류]  multi_logloss | multi_error | auc_mu
+    #      [회귀]      rmse | mae | mape | huber
+    metric: "binary_logloss"
+
+    # Q33. 다중분류 시 클래스 수 (objective=multiclass일 때 필수)
+    # num_class: 3
+
+    # Q34. 클래스 불균형 자동 보정 여부
+    #      → true  : 양/음성 비율에 맞게 가중치 자동 조절
+    #      → false : 가중치 조절 안 함
+    is_unbalance: true
+
+    # Q35. 부스팅 유형
+    #      → gbdt : 기본 그래디언트 부스팅 (가장 범용적)
+    #      → dart : 드롭아웃 부스팅 (과적합 방지)
+    #      → rf   : 랜덤 포레스트 스타일
+    boosting_type: "gbdt"
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  STEP 11. Optuna 자동 하이퍼파라미터 탐색
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   optuna:
-    enabled: true
-    n_trials: 50
-    timeout: null
-    params:
-      n_estimators:     [500, 3000]
-      max_depth:        [4, 12]
-      learning_rate:    [0.01, 0.3]
-      num_leaves:       [20, 256]
-      min_child_samples: [5, 100]
-      reg_alpha:        [0.0, 10.0]
-      reg_lambda:       [0.0, 10.0]
-      subsample:        [0.5, 1.0]
-      colsample_bytree: [0.5, 1.0]
 
-# ── 평가 설정 ──────────────────────────────────────────────────
+    # Q36. Optuna 사용 여부
+    enabled: true
+
+    # Q37. 탐색 횟수 (많을수록 정밀, 대신 시간 증가)
+    n_trials: 50
+
+    # Q38. 시간 제한 (초 단위, null이면 무제한)
+    timeout: null
+
+    # Q39. 탐색 범위 — [최소, 최대] 형식
+    params:
+      n_estimators:      [500, 3000]     # 부스팅 반복 횟수
+      max_depth:         [4, 12]         # 트리 깊이
+      learning_rate:     [0.01, 0.3]     # 학습률 (log-uniform 탐색)
+      num_leaves:        [20, 256]       # 잎 노드 수 (LightGBM 핵심 파라미터)
+      min_child_samples: [5, 100]        # 잎 노드 최소 데이터 수
+      reg_alpha:         [0.0, 10.0]     # L1 정규화
+      reg_lambda:        [0.0, 10.0]     # L2 정규화
+      subsample:         [0.5, 1.0]      # 행 샘플링 비율
+      colsample_bytree:  [0.5, 1.0]      # 열 샘플링 비율
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  STEP 12. 평가 설정
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 evaluation:
+
+  # Q40. Optuna가 최적화할 목표 지표
+  #      [분류]  logloss | auc | f1_macro | f1_micro | accuracy
+  #      [회귀]  rmse | mae | r2 | mape
   optuna_target_metric: "logloss"
+
+  # Q41. 목표 방향
+  #      → minimize : 값이 작을수록 좋음 (logloss, rmse 등)
+  #      → maximize : 값이 클수록 좋음 (auc, f1, accuracy 등)
   optuna_direction: "minimize"
 
+  # Q42. 최종 리포트에 출력할 지표 목록
+  #      필요한 것만 남기고 주석 처리하세요
   report_metrics:
-    - "accuracy"
-    - "precision_macro"
-    - "recall_macro"
-    - "f1_macro"
-    - "f1_micro"
-    - "roc_auc"
-    - "pr_auc"
-    - "logloss"
+    - "accuracy"              # 정확도
+    - "precision_macro"       # 정밀도 (macro 평균)
+    - "recall_macro"          # 재현율 (macro 평균)
+    - "f1_macro"              # F1 (macro) — 불균형 시 권장
+    - "f1_micro"              # F1 (micro)
+    - "roc_auc"               # ROC-AUC
+    - "pr_auc"                # PR-AUC
+    - "logloss"               # Log Loss
+    # - "f1_weighted"         # 가중 F1
+    # - "cohen_kappa"         # Cohen's Kappa
+    # - "matthews_corrcoef"   # MCC
+    # - "rmse"                # (회귀 전용)
+    # - "mae"                 # (회귀 전용)
+    # - "r2"                  # (회귀 전용)
 
+  # Q43. 이진분류 임계값 튜닝 (다중분류 · 회귀는 false)
   threshold_tuning:
     enabled: true
-    metric: "f1_macro"
-    search_range: [0.1, 0.9]
-    search_step: 0.01
+    metric: "f1_macro"             # 최적화 기준 지표
+    search_range: [0.1, 0.9]       # 탐색 범위
+    search_step: 0.01              # 탐색 간격
 
-# ── 시각화 설정 ────────────────────────────────────────────────
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  STEP 13. 시각화 설정
+#           (true = 생성 / false = 건너뜀)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 visualization:
-  confusion_matrix: true
-  feature_importance: true
-  roc_curve: true
-  pr_curve: true
-  calibration_curve: true
-  prediction_scatter: true
-  lift_gain_curve: true
-  shap_summary: true
-  shap_waterfall: true
-  shap_dependence: true
-  partial_dependence: true
-  shap_max_display: 20
-  shap_dependence_features: 5
-  pdp_features: 5
-  dpi: 150
+
+  # --- 기본 차트 ---
+  confusion_matrix: true           # 혼동 행렬
+  feature_importance: true         # 피처 중요도 바 차트
+  roc_curve: true                  # ROC 커브 (이진분류)
+  pr_curve: true                   # PR 커브 (이진분류)
+  calibration_curve: true          # 확률 교정 곡선
+  prediction_scatter: true         # 예측 확률 산점도 (이진분류)
+  lift_gain_curve: true            # Lift / Gain 커브 (이진분류)
+
+  # --- SHAP 설명력 차트 ---
+  shap_summary: true               # SHAP 요약 (비스웜)
+  shap_waterfall: true             # SHAP 워터폴 (단일 샘플)
+  shap_dependence: true            # SHAP 의존성 (상위 N 피처)
+  partial_dependence: true         # PDP (부분 의존성)
+
+  # --- 차트 세부 옵션 ---
+  shap_max_display: 20             # SHAP 플롯에 표시할 최대 피처 수
+  shap_dependence_features: 5      # 의존성 플롯 상위 N 피처
+  pdp_features: 5                  # PDP 상위 N 피처
+  dpi: 150                         # 저장 이미지 해상도

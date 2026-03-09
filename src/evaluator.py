@@ -261,8 +261,15 @@ def plot_feature_importance(
         importances = model.feature_importances_
     elif hasattr(model, "get_feature_importance"):
         importances = model.get_feature_importance()
+    elif hasattr(model, "coef_"):
+        # Logistic Regression 등 선형 모델: |계수| 절대값 사용
+        coef = model.coef_
+        if coef.ndim == 2:
+            importances = np.abs(coef).mean(axis=0)  # 다중분류: 클래스별 평균
+        else:
+            importances = np.abs(coef)
     else:
-        logger.warning("해당 모델은 feature_importances_ 속성이 없습니다.")
+        logger.warning("해당 모델은 feature_importances_ / coef_ 속성이 없어 중요도 시각화를 건너뜁니다.")
         return
 
     imp_df = (
@@ -399,11 +406,21 @@ def plot_lift_gain_curve(
 #  4. 시각화 — SHAP
 # ═══════════════════════════════════════════════════════════════
 def _get_shap_explainer_and_values(model, X: pd.DataFrame):
-    """SHAP Explainer와 shap_values를 생성합니다. (내부 헬퍼)"""
+    """SHAP Explainer와 shap_values를 생성합니다. (내부 헬퍼)
+    
+    TreeExplainer 호환 모델이 아니면 None을 반환합니다.
+    (KernelExplainer는 너무 느려서 기본 적용하지 않음)
+    """
     import shap
-    explainer = shap.TreeExplainer(model)
-    shap_values = explainer.shap_values(X)
-    return explainer, shap_values
+    try:
+        explainer = shap.TreeExplainer(model)
+        shap_values = explainer.shap_values(X)
+        return explainer, shap_values
+    except Exception as e:
+        logger.warning(
+            f"SHAP TreeExplainer 미지원 모델 (건너뜀): {type(model).__name__} — {e}"
+        )
+        return None, None
 
 
 def plot_shap_summary(
@@ -420,6 +437,8 @@ def plot_shap_summary(
     try:
         import shap
         _, shap_values = _get_shap_explainer_and_values(model, X)
+        if shap_values is None:
+            return
 
         plt.figure(figsize=(12, 8))
         if isinstance(shap_values, list):
@@ -509,6 +528,8 @@ def plot_shap_dependence(
 
         # 다중 클래스면 positive 클래스 사용
         sv = shap_values[1] if isinstance(shap_values, list) else shap_values
+        if sv is None:
+            return
 
         # 피처 중요도 순으로 상위 N개 선택
         mean_abs_shap = np.abs(sv).mean(axis=0)

@@ -1,7 +1,8 @@
 # ╔══════════════════════════════════════════════════════════════╗
-# ║  📋  BalancedRandomForest 파이프라인 설정 가이드              ║
+# ║  📋  Logistic Regression 파이프라인 설정 가이드               ║
 # ║  위에서부터 순서대로 항목을 확인하며 값을 채워주세요            ║
-# ║  ※ 분류 전용 — 내부 언더샘플링으로 클래스 불균형 자동 해소     ║
+# ║  ※ 분류 전용 — 가장 기본적인 베이스라인 모델                   ║
+# ║  ※ 스케일링 필수 (STEP 7에서 standard 권장)                   ║
 # ╚══════════════════════════════════════════════════════════════╝
 
 
@@ -11,13 +12,13 @@
 project:
 
   # Q1. 프로젝트 이름 (결과 파일·로그에 표시됩니다)
-  name: "my_balanced_rf_project"
+  name: "my_logistic_project"
 
   # Q2. 랜덤 시드 (재현성을 위해 고정)
   seed: 42
 
   # Q3. 어떤 문제를 풀고 있나요?
-  #     ※ BalancedRandomForest는 분류 전용입니다
+  #     ※ Logistic Regression은 분류 전용입니다
   #     → classification : 분류 (이진 · 다중 모두 포함)
   task_type: "classification"
 
@@ -31,7 +32,7 @@ paths:
   raw_data: "data/raw/train.csv"
 
   # Q5. 전처리 후 저장할 경로 (자동 생성됩니다)
-  processed_data: "data/processed/train_brf.parquet"
+  processed_data: "data/processed/train_logistic.parquet"
 
   # Q6. K-Fold 분할 저장 경로
   interim_train: "data/interim/train.parquet"
@@ -75,7 +76,7 @@ features:
     - "index"
 
   # Q14. 범주형(카테고리) 변수 목록
-  #      BalancedRF는 범주형을 직접 처리 못하므로 인코딩 필수 (STEP 8)
+  #      Logistic Regression은 범주형을 직접 처리 못하므로 인코딩 필수 (STEP 8)
   cat_cols:
     - "gender"
     - "house_type"
@@ -96,17 +97,14 @@ features:
 
   # ── [A] 사용자 정의 전처리 (custom_preprocessor.py) ──
   # Q15-1. 사용자가 직접 짠 전처리 코드 실행 여부
-  #        (이상치 제거, 파생변수 생성 등 custom_preprocessor.py 안의 함수)
   #        → true  : custom_preprocessor.py의 코드를 실행합니다 (기본값)
   #        → false : 사용자 전처리를 건너뜁니다 (이미 가공된 데이터를 쓸 때)
   enable_custom_preprocessing: true
 
   # ── [B] 시스템 자동 전처리 (결측치 · 스케일링 · 인코딩) ──
   # Q15-2. YAML 설정 기반 자동 전처리 실행 여부
-  #        (결측치 채우기, 스케일링, 범주형 인코딩 등 DataPreprocessor가 수행)
   #        → true  : 아래 STEP 5~8의 설정에 따라 자동 전처리합니다 (기본값)
   #        → false : 시스템 전처리를 통째로 건너뜁니다
-  #                  (이미 결측치·스케일링·인코딩이 모두 완료된 데이터를 쓸 때)
   enable_system_preprocessing: true
 
 
@@ -140,10 +138,10 @@ features:
   imbalance:
 
     # Q19. 불균형 데이터 보정 방법
-    #      ※ BalancedRF는 자체 언더샘플링이 있으므로 none 권장
     #      ── 오버샘플링 ──
-    #      → none            : 사용 안 함 (BalancedRF 자체가 불균형 전용)
-    #      → smote | adasyn | borderline_smote | random_over
+    #      → none            : 사용 안 함 (class_weight=balanced로 대체 가능)
+    #      → smote           : SMOTE — 합성 소수 오버샘플링 (가장 대표적)
+    #      → adasyn | borderline_smote | random_over
     #      ── 언더샘플링 ──
     #      → random_under | tomek | enn
     #      ── 복합 ──
@@ -160,12 +158,13 @@ features:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   scaling:
 
-    # Q20. 스케일링 방법 (트리 모델은 보통 불필요)
-    #      → none     : 사용 안 함 (BalancedRF 기본 권장)
-    #      → standard : 평균 0, 분산 1로 정규화
+    # Q20. 스케일링 방법
+    #      ※ Logistic Regression은 스케일링 필수!
+    #      → standard : 평균 0, 분산 1로 정규화 (기본 권장)
     #      → robust   : 중앙값 기준 정규화 (이상치에 강함)
     #      → minmax   : 0~1 범위로 축소
-    method: "none"
+    #      → none     : 사용 안 함 (비권장)
+    method: "standard"
 
     # Q21. 스케일링 대상 컬럼
     #      → auto : 수치형 전체 자동 선택
@@ -183,7 +182,7 @@ features:
   encoding:
 
     # Q22. 범주형 인코딩 방법
-    #      → ordinal : 순서형 숫자로 변환 (BalancedRF 기본 권장)
+    #      → ordinal : 순서형 숫자로 변환 (Logistic 기본 권장)
     #      → label   : 라벨 인코딩
     #      → target  : 타겟 평균값으로 변환 (category_encoders 필요)
     #      → none    : 사용 안 함
@@ -204,8 +203,8 @@ features:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 model:
 
-  # ※ 이 파일은 BalancedRandomForest 전용입니다 (변경 불필요)
-  algorithm: "balancedrandomforest"
+  # ※ 이 파일은 Logistic Regression 전용입니다 (변경 불필요)
+  algorithm: "logistic"
 
   # Q24. K-Fold 교차검증 수 (보통 5 또는 10)
   n_splits: 5
@@ -224,41 +223,36 @@ model:
   shuffle: true
 
   # Q28. 얼리스토핑 patience
-  #      ※ BalancedRF는 얼리스토핑 미지원 — 0 고정
+  #      ※ Logistic Regression은 얼리스토핑 미지원 — 0 고정
   early_stopping_rounds: 0
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-#  STEP 10. BalancedRandomForest 고정 하이퍼파라미터
+#  STEP 10. Logistic Regression 고정 하이퍼파라미터
 #           (Optuna 탐색 대상이 아닌 값)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   fixed_params:
 
-    # Q29. 병렬 처리 코어 수
-    #      → -1 이면 모든 CPU 코어 사용 (빠름)
-    #      ※ 주의: imbalanced-learn BalancedRF는 GPU 학습을 지원하지 않습니다! (CPU 전용)
-    n_jobs: -1
+    # Q29. 최적화 알고리즘 (solver)
+    #      → lbfgs     : L2/없음, 다중분류 OK (기본 권장)
+    #      → saga      : L1/L2/elasticnet, 다중분류 OK, 대용량 OK
+    #      → liblinear : L1/L2, 소규모 데이터용, 다중분류 미지원
+    #      → newton-cg : L2, 다중분류 OK
+    solver: "lbfgs"
 
-    # Q30. 분할 기준 함수
-    #      → gini     : 지니 불순도 (기본)
-    #      → entropy  : 정보 이득 (엔트로피)
-    #      → log_loss : 로그 손실
-    criterion: "gini"
+    # Q30. 수렴 반복 횟수 (부족 시 ConvergenceWarning 발생)
+    max_iter: 1000
 
     # Q31. 클래스 가중치
-    #      → balanced           : 클래스 비율 반비례 가중치
-    #      → balanced_subsample : 부트스트랩 샘플마다 가중치 재계산
-    #      → null               : 가중치 없음
+    #      → balanced : 클래스 비율 반비례 가중치 (불균형 시 권장)
+    #      → null     : 가중치 없음
     class_weight: "balanced"
 
-    # Q32. 부트스트랩 샘플링 사용 여부
-    bootstrap: true
-
-    # Q33. 언더샘플링 전략 (BalancedRF 고유)
-    #      → auto         : 다수 클래스를 소수 클래스 수준으로 자동 축소
-    #      → all          : 모든 클래스를 리샘플링
-    #      → not minority : 소수 클래스 제외하고 리샘플링
-    # sampling_strategy: "auto"
+    # Q32. 다중분류 처리 방식
+    #      → auto        : 이진→ovr, 다중→multinomial 자동 선택
+    #      → ovr         : One-vs-Rest (각 클래스별 개별 분류기)
+    #      → multinomial : Softmax 기반 (전체 클래스 동시 확률)
+    multi_class: "auto"
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -266,25 +260,20 @@ model:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   optuna:
 
-    # Q34. Optuna 사용 여부
+    # Q33. Optuna 사용 여부
     enabled: true
 
-    # Q35. 탐색 횟수 (많을수록 정밀, 대신 시간 증가)
-    n_trials: 50
+    # Q34. 탐색 횟수 (많을수록 정밀, 대신 시간 증가)
+    n_trials: 30
 
-    # Q36. 시간 제한 (초 단위, null이면 무제한)
+    # Q35. 시간 제한 (초 단위, null이면 무제한)
     timeout: null
 
-    # Q37. 탐색 범위 — [최소, 최대] 형식
+    # Q36. 탐색 범위 — [최소, 최대] 형식
     params:
-      n_estimators:      [100, 2000]     # 트리 개수
-      max_depth:         [4, 30]         # 트리 깊이
-      min_samples_split: [2, 20]         # 분할 최소 샘플 수
-      min_samples_leaf:  [1, 10]         # 잎 노드 최소 샘플 수
-      max_features:      ["sqrt", "log2", 0.3, 0.5, 0.7, 1.0]
-        # sqrt : 피처 수의 제곱근
-        # log2 : 피처 수의 log2
-        # 숫자 : 전체 대비 비율
+      C: [0.001, 100.0]                 # 정규화 강도 (작을수록 강한 정규화, log-uniform)
+      # penalty: ["l1", "l2"]           # 정규화 유형 (solver에 따라 지원 여부 다름)
+      # solver:  ["lbfgs", "saga"]      # solver도 함께 탐색 가능
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -292,17 +281,16 @@ model:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 evaluation:
 
-  # Q38. Optuna가 최적화할 목표 지표
+  # Q37. Optuna가 최적화할 목표 지표
   #      [분류]  logloss | auc | f1_macro | f1_micro | accuracy
-  #      [회귀]  rmse | mae | r2 | mape
   optuna_target_metric: "f1_macro"
 
-  # Q39. 목표 방향
+  # Q38. 목표 방향
   #      → minimize : 값이 작을수록 좋음 (logloss, rmse 등)
   #      → maximize : 값이 클수록 좋음 (auc, f1, accuracy 등)
   optuna_direction: "maximize"
 
-  # Q40. 최종 리포트에 출력할 지표 목록
+  # Q39. 최종 리포트에 출력할 지표 목록
   #      필요한 것만 남기고 주석 처리하세요
   report_metrics:
     - "accuracy"              # 정확도
@@ -317,7 +305,7 @@ evaluation:
     # - "cohen_kappa"         # Cohen's Kappa
     # - "matthews_corrcoef"   # MCC
 
-  # Q41. 이진분류 임계값 튜닝 (다중분류 · 회귀는 false)
+  # Q40. 이진분류 임계값 튜닝 (다중분류는 false)
   threshold_tuning:
     enabled: true
     metric: "f1_macro"             # 최적화 기준 지표
@@ -333,7 +321,7 @@ visualization:
 
   # --- 기본 차트 ---
   confusion_matrix: true           # 혼동 행렬
-  feature_importance: true         # 피처 중요도 바 차트
+  feature_importance: true         # 피처 중요도 (coef_ 기반 — 계수 절대값)
   roc_curve: true                  # ROC 커브 (이진분류)
   pr_curve: true                   # PR 커브 (이진분류)
   calibration_curve: true          # 확률 교정 곡선
@@ -341,10 +329,11 @@ visualization:
   lift_gain_curve: true            # Lift / Gain 커브 (이진분류)
 
   # --- SHAP 설명력 차트 ---
-  shap_summary: true               # SHAP 요약 (비스웜)
+  #     ※ Logistic Regression은 TreeExplainer 미지원 — false 권장
+  shap_summary: false              # SHAP 요약 (비스웜)
   shap_waterfall: false            # SHAP 워터폴 (단일 샘플)
   shap_dependence: false           # SHAP 의존성 (상위 N 피처)
-  partial_dependence: false        # PDP (부분 의존성)
+  partial_dependence: true         # PDP (부분 의존성) — sklearn 모든 모델 호환
 
   # --- 차트 세부 옵션 ---
   shap_max_display: 20             # SHAP 플롯에 표시할 최대 피처 수

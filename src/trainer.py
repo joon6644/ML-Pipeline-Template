@@ -1,7 +1,8 @@
 """
 trainer.py — K-Fold 학습 · Optuna 튜닝 · 모델 저장
 ════════════════════════════════════════════════════
-CatBoost / LightGBM / XGBoost / RandomForest를 동일한 인터페이스로 다루며,
+CatBoost / LightGBM / XGBoost / RandomForest / Logistic Regression /
+Decision Tree / SVM / KNN / Naive Bayes 를 동일한 인터페이스로 다루며,
 Optuna 자동 튜닝 → K-Fold 최종 학습 → OOF 예측 생성까지 담당합니다.
 
 ⚠️ 데이터 누수 방지: 각 K-Fold 내부에서 DataPreprocessor.fit(train)으로
@@ -86,11 +87,93 @@ def _build_balancedrandomforest(params: dict, task_type: str, seed: int):
     return BalancedRandomForestClassifier(**params, random_state=seed)
 
 
+def _build_easyensemble(params: dict, task_type: str, seed: int):
+    """EasyEnsembleClassifier 모델 객체를 생성합니다. (Imbalanced-Learn)
+
+    내부적으로 여러 개의 AdaBoost 분류기를 생성하고,
+    각 분류기마다 다수 클래스를 랜덤 언더샘플링하여 학습합니다.
+    극심한 불균형 데이터에 효과적입니다.
+    """
+    if task_type == "regression":
+        raise ValueError("EasyEnsembleClassifier는 분류(Classification) 태스크 전용입니다.")
+    from imblearn.ensemble import EasyEnsembleClassifier
+    return EasyEnsembleClassifier(**params, random_state=seed)
+
+
+def _build_logistic(params: dict, task_type: str, seed: int):
+    """Logistic Regression 모델 객체를 생성합니다."""
+    from sklearn.linear_model import LogisticRegression
+    if task_type == "regression":
+        raise ValueError("LogisticRegression은 분류(Classification) 태스크 전용입니다.")
+    return LogisticRegression(**params, random_state=seed)
+
+
+def _build_stacking(params: dict, task_type: str, seed: int):
+    """StackingClassifier / StackingRegressor 모델 객체를 생성합니다.
+    
+    1층(Base) 모델들의 예측을 취합하여 2층(Meta) 모델로 최종 예측합니다.
+    params 내의 'estimators' (1층 모델 딕셔너리)와 'final_estimator' (2층 모델 객체)를 활용합니다.
+    """
+    if "estimators" not in params or "final_estimator" not in params:
+        raise ValueError("스태킹 모델은 'estimators'와 'final_estimator' 인자가 필수입니다.")
+    
+    # K-Fold 분할을 위해 cv 값도 추출 가능 (기본값 5)
+    cv = params.pop("cv", 5)
+    
+    if task_type == "regression":
+        from sklearn.ensemble import StackingRegressor
+        return StackingRegressor(
+            estimators=params["estimators"],
+            final_estimator=params["final_estimator"],
+            cv=cv,
+            n_jobs=-1
+        )
+    else:
+        from sklearn.ensemble import StackingClassifier
+        return StackingClassifier(
+            estimators=params["estimators"],
+            final_estimator=params["final_estimator"],
+            cv=cv,
+            n_jobs=-1
+        )
+
+def _build_decisiontree(params: dict, task_type: str, seed: int):
+    """Decision Tree 모델 객체를 생성합니다."""
+    from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
+    if task_type == "regression":
+        return DecisionTreeRegressor(**params, random_state=seed)
+    return DecisionTreeClassifier(**params, random_state=seed)
+
+
+def _build_svm(params: dict, task_type: str, seed: int):
+    """SVM 모델 객체를 생성합니다. (probability=True 강제)"""
+    from sklearn.svm import SVC, SVR
+    if task_type == "regression":
+        return SVR(**params)
+    return SVC(**params, random_state=seed, probability=True)
+
+
+def _build_knn(params: dict, task_type: str, seed: int):
+    """KNN 모델 객체를 생성합니다. (random_state 없음 — 결정론적 알고리즘)"""
+    from sklearn.neighbors import KNeighborsClassifier, KNeighborsRegressor
+    if task_type == "regression":
+        return KNeighborsRegressor(**params)
+    return KNeighborsClassifier(**params)
+
+
+def _build_naivebayes(params: dict, task_type: str, seed: int):
+    """Gaussian Naive Bayes 모델 객체를 생성합니다. (분류 전용)"""
+    if task_type == "regression":
+        raise ValueError("Naive Bayes는 분류(Classification) 태스크 전용입니다.")
+    from sklearn.naive_bayes import GaussianNB
+    return GaussianNB(**params)
+
+
 def get_model(algorithm: str, params: dict, task_type: str = "classification", seed: int = 42):
     """알고리즘 문자열로 모델 객체를 반환합니다.
     
     Args:
-        algorithm: "catboost" | "lightgbm" | "xgboost" | "randomforest"
+        algorithm: 지원 알고리즘 문자열
         params: 모델 하이퍼파라미터 dict
         task_type: "classification" | "regression"
         seed: 랜덤 시드
@@ -104,11 +187,36 @@ def get_model(algorithm: str, params: dict, task_type: str = "classification", s
         "xgboost": _build_xgboost,
         "randomforest": _build_randomforest,
         "balancedrandomforest": _build_balancedrandomforest,
+        "easyensemble": _build_easyensemble,
+        "stacking": _build_stacking,
+        "logistic": _build_logistic,
+        "decisiontree": _build_decisiontree,
+        "svm": _build_svm,
+        "knn": _build_knn,
+        "naivebayes": _build_naivebayes,
     }
+    
+    # ── 스태킹 앙상블 특수 처리 ──
+    # 스태킹은 내부적으로 1층(estimators)과 2층(final_estimator) 객체가 필요합니다.
+    if algorithm == "stacking":
+        base_names = params.pop("base_models", ["catboost", "lightgbm", "xgboost"])
+        meta_name = params.pop("meta_model", "logistic")
+        
+        estimators = []
+        for name in base_names:
+            # 1층 모델들은 기본 파라미터로 생성 (튜닝 미적용)
+            base_model = builders[name]({}, task_type, seed)
+            estimators.append((name, base_model))
+            
+        final_estimator = builders[meta_name]({}, task_type, seed)
+        
+        params["estimators"] = estimators
+        params["final_estimator"] = final_estimator
+
     if algorithm not in builders:
         raise ValueError(
             f"지원하지 않는 알고리즘: {algorithm} "
-            f"(catboost, lightgbm, xgboost, randomforest, balancedrandomforest 중 선택)"
+            f"(지원 목록: {', '.join(builders.keys())})"
         )
     return builders[algorithm](params, task_type, seed)
 
@@ -321,6 +429,134 @@ def _suggest_balancedrandomforest_params(trial, optuna_cfg: dict) -> dict:
     return _suggest_randomforest_params(trial, optuna_cfg)
 
 
+def _suggest_easyensemble_params(trial, optuna_cfg: dict) -> dict:
+    """EasyEnsembleClassifier용 Optuna 제안 파라미터를 생성합니다."""
+    params_range = optuna_cfg.get("params", {})
+    suggested = {}
+
+    if "n_estimators" in params_range:
+        r = params_range["n_estimators"]
+        suggested["n_estimators"] = trial.suggest_int("n_estimators", r[0], r[1])
+    if "sampling_strategy" in params_range:
+        r = params_range["sampling_strategy"]
+        if isinstance(r, list) and len(r) == 2 and all(isinstance(v, (int, float)) for v in r):
+            suggested["sampling_strategy"] = trial.suggest_float("sampling_strategy", r[0], r[1])
+        else:
+            suggested["sampling_strategy"] = trial.suggest_categorical("sampling_strategy", r)
+
+    return suggested
+
+
+def _suggest_logistic_params(trial, optuna_cfg: dict) -> dict:
+    """Logistic Regression용 Optuna 제안 파라미터를 생성합니다."""
+    params_range = optuna_cfg.get("params", {})
+    suggested = {}
+
+    if "C" in params_range:
+        r = params_range["C"]
+        suggested["C"] = trial.suggest_float("C", r[0], r[1], log=True)
+    if "penalty" in params_range:
+        suggested["penalty"] = trial.suggest_categorical("penalty", params_range["penalty"])
+    if "solver" in params_range:
+        suggested["solver"] = trial.suggest_categorical("solver", params_range["solver"])
+    if "max_iter" in params_range:
+        r = params_range["max_iter"]
+        suggested["max_iter"] = trial.suggest_int("max_iter", r[0], r[1])
+
+    return suggested
+
+
+def _suggest_stacking_params(trial, optuna_cfg: dict) -> dict:
+    """Stacking용 Optuna 제안 파라미터를 생성합니다.
+    
+    일반적으로 스태킹 자체 파라미터(CV 개수 등)보다는 메타/베이스 모델을 튜닝해야 하나,
+    복잡도를 낮추기 위해 여기서는 파이프라인에서 기본 모델 고정으로 사용합니다.
+    """
+    return {}
+
+
+def _suggest_decisiontree_params(trial, optuna_cfg: dict) -> dict:
+    """Decision Tree용 Optuna 제안 파라미터를 생성합니다."""
+    params_range = optuna_cfg.get("params", {})
+    suggested = {}
+
+    if "max_depth" in params_range:
+        r = params_range["max_depth"]
+        suggested["max_depth"] = trial.suggest_int("max_depth", r[0], r[1])
+    if "min_samples_split" in params_range:
+        r = params_range["min_samples_split"]
+        suggested["min_samples_split"] = trial.suggest_int("min_samples_split", r[0], r[1])
+    if "min_samples_leaf" in params_range:
+        r = params_range["min_samples_leaf"]
+        suggested["min_samples_leaf"] = trial.suggest_int("min_samples_leaf", r[0], r[1])
+    if "criterion" in params_range:
+        suggested["criterion"] = trial.suggest_categorical("criterion", params_range["criterion"])
+    if "max_features" in params_range:
+        choices = params_range["max_features"]
+        str_choices = [str(c) for c in choices]
+        selected = trial.suggest_categorical("max_features", str_choices)
+        try:
+            suggested["max_features"] = float(selected)
+        except ValueError:
+            suggested["max_features"] = selected
+
+    return suggested
+
+
+def _suggest_svm_params(trial, optuna_cfg: dict) -> dict:
+    """SVM용 Optuna 제안 파라미터를 생성합니다."""
+    params_range = optuna_cfg.get("params", {})
+    suggested = {}
+
+    if "C" in params_range:
+        r = params_range["C"]
+        suggested["C"] = trial.suggest_float("C", r[0], r[1], log=True)
+    if "kernel" in params_range:
+        suggested["kernel"] = trial.suggest_categorical("kernel", params_range["kernel"])
+    if "gamma" in params_range:
+        choices = params_range["gamma"]
+        if isinstance(choices, list) and all(isinstance(c, str) for c in choices):
+            suggested["gamma"] = trial.suggest_categorical("gamma", choices)
+        else:
+            suggested["gamma"] = trial.suggest_float("gamma", choices[0], choices[1], log=True)
+    if "degree" in params_range:
+        r = params_range["degree"]
+        suggested["degree"] = trial.suggest_int("degree", r[0], r[1])
+
+    return suggested
+
+
+def _suggest_knn_params(trial, optuna_cfg: dict) -> dict:
+    """KNN용 Optuna 제안 파라미터를 생성합니다."""
+    params_range = optuna_cfg.get("params", {})
+    suggested = {}
+
+    if "n_neighbors" in params_range:
+        r = params_range["n_neighbors"]
+        suggested["n_neighbors"] = trial.suggest_int("n_neighbors", r[0], r[1])
+    if "weights" in params_range:
+        suggested["weights"] = trial.suggest_categorical("weights", params_range["weights"])
+    if "metric" in params_range:
+        suggested["metric"] = trial.suggest_categorical("metric", params_range["metric"])
+    if "p" in params_range:
+        r = params_range["p"]
+        suggested["p"] = trial.suggest_int("p", r[0], r[1])
+
+    return suggested
+
+
+def _suggest_naivebayes_params(trial, optuna_cfg: dict) -> dict:
+    """Naive Bayes용 Optuna 제안 파라미터를 생성합니다."""
+    params_range = optuna_cfg.get("params", {})
+    suggested = {}
+
+    if "var_smoothing" in params_range:
+        r = params_range["var_smoothing"]
+        suggested["var_smoothing"] = trial.suggest_float("var_smoothing", r[0], r[1], log=True)
+
+    return suggested
+
+
 # ─── suggest 함수 매핑 ─────────────────────────────────────────
 _SUGGEST_FN_MAP = {
     "catboost": _suggest_catboost_params,
@@ -328,6 +564,13 @@ _SUGGEST_FN_MAP = {
     "xgboost": _suggest_xgboost_params,
     "randomforest": _suggest_randomforest_params,
     "balancedrandomforest": _suggest_balancedrandomforest_params,
+    "easyensemble": _suggest_easyensemble_params,
+    "stacking": _suggest_stacking_params,
+    "logistic": _suggest_logistic_params,
+    "decisiontree": _suggest_decisiontree_params,
+    "svm": _suggest_svm_params,
+    "knn": _suggest_knn_params,
+    "naivebayes": _suggest_naivebayes_params,
 }
 
 
@@ -460,7 +703,9 @@ def run_optuna_tuning(
     groups = X[group_col] if group_col and group_col in X.columns else None
 
     cat_cols = [c for c in feat_cfg["cat_cols"] if c in X.columns]
-    needs_encoding = algorithm in ("xgboost", "randomforest", "balancedrandomforest")
+    needs_encoding = algorithm in ("xgboost", "randomforest", "balancedrandomforest",
+                                   "easyensemble", "logistic", "decisiontree",
+                                   "svm", "knn", "naivebayes")
 
     suggest_fn = _SUGGEST_FN_MAP[algorithm]
 
@@ -559,7 +804,9 @@ def train_final_model(
     groups = X[group_col] if group_col and group_col in X.columns else None
 
     cat_cols = [c for c in feat_cfg["cat_cols"] if c in X.columns]
-    needs_encoding = algorithm in ("xgboost", "randomforest", "balancedrandomforest")
+    needs_encoding = algorithm in ("xgboost", "randomforest", "balancedrandomforest",
+                                   "easyensemble", "stacking", "logistic", "decisiontree",
+                                   "svm", "knn", "naivebayes")
 
     # 파라미터 병합
     params = {**fixed_params, **(best_params or {})}
@@ -679,7 +926,9 @@ def train_full_model(
     fixed_params = model_cfg["fixed_params"].copy()
 
     cat_cols = [c for c in feat_cfg["cat_cols"] if c in X_train.columns]
-    needs_encoding = algorithm in ("xgboost", "randomforest", "balancedrandomforest")
+    needs_encoding = algorithm in ("xgboost", "randomforest", "balancedrandomforest",
+                                   "easyensemble", "stacking", "logistic", "decisiontree",
+                                   "svm", "knn", "naivebayes")
 
     # DataPreprocessor: 전체 훈련 데이터로 fit
     dp = DataPreprocessor(config)

@@ -72,6 +72,9 @@ def get_feature_config(config: dict) -> dict[str, Any]:
         "missing": features.get("missing", {}),
         "scaling": features.get("scaling", {}),
         "encoding": features.get("encoding", {}),
+        # 전처리 On/Off 스위치 (STEP 4.5)
+        "enable_custom_preprocessing": features.get("enable_custom_preprocessing", True),
+        "enable_system_preprocessing": features.get("enable_system_preprocessing", True),
     }
 
 

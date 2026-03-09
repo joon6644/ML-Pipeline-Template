@@ -1,93 +1,72 @@
 # ╔══════════════════════════════════════════════════════════════╗
-# ║  📋  BalancedRandomForest 파이프라인 설정 가이드              ║
+# ║  📋  KNN 파이프라인 설정 가이드                               ║
 # ║  위에서부터 순서대로 항목을 확인하며 값을 채워주세요            ║
-# ║  ※ 분류 전용 — 내부 언더샘플링으로 클래스 불균형 자동 해소     ║
+# ║  ※ 거리 기반 모델 — 스케일링 절대 필수                        ║
 # ╚══════════════════════════════════════════════════════════════╝
-
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #  STEP 1.  프로젝트 기본 정보
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 project:
-
   # Q1. 프로젝트 이름 (결과 파일·로그에 표시됩니다)
-  name: "my_balanced_rf_project"
-
+  name: "my_knn_project"
   # Q2. 랜덤 시드 (재현성을 위해 고정)
   seed: 42
-
   # Q3. 어떤 문제를 풀고 있나요?
-  #     ※ BalancedRandomForest는 분류 전용입니다
-  #     → classification : 분류 (이진 · 다중 모두 포함)
+  #     → classification : 분류 (이진 · 다중)
+  #     → regression     : 회귀
   task_type: "classification"
-
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #  STEP 2.  데이터 경로
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 paths:
-
   # Q4. 훈련 데이터 파일 경로
   raw_data: "data/raw/train.csv"
-
-  # Q5. 전처리 후 저장할 경로 (자동 생성됩니다)
-  processed_data: "data/processed/train_brf.parquet"
-
+  # Q5. 전처리 후 저장 경로
+  processed_data: "data/processed/train_knn.parquet"
   # Q6. K-Fold 분할 저장 경로
   interim_train: "data/interim/train.parquet"
   interim_holdout: "data/interim/holdout.parquet"
-
-  # Q7. 테스트 데이터 경로 (제출용, 없으면 비워두세요)
+  # Q7. 테스트 데이터 경로 (없으면 비워두세요)
   test_data: "data/raw/test.csv"
-
   # Q8. 결과물 저장 폴더들
   model_dir: "models"
   result_dir: "results"
   figure_dir: "results/figures"
   submission_dir: "results/submissions"
 
-
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #  STEP 3.  타겟 · 컬럼 설정
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 data:
-
   # Q9. 예측할 타겟 변수의 컬럼명
   target_col: "target"
-
   # Q10. ID 컬럼명 (없으면 null)
   id_col: "id"
-
   # Q11. CSV 구분자
   separator: ","
-
   # Q12. CSV 파일 인코딩
   encoding: "utf-8"
-
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #  STEP 4.  피처(변수) 설정
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 features:
-
-  # Q13. 학습에서 제외할 컬럼 (ID · 타겟은 자동 제외됩니다)
+  # Q13. 학습에서 제외할 컬럼
   drop_cols:
     - "index"
-
-  # Q14. 범주형(카테고리) 변수 목록
-  #      BalancedRF는 범주형을 직접 처리 못하므로 인코딩 필수 (STEP 8)
+  # Q14. 범주형 변수 목록
   cat_cols:
     - "gender"
     - "house_type"
     - "income_type"
     - "job_type"
-
-  # Q15. 수치형 변수 목록 (비워두면 나머지를 자동으로 수치형 판별)
+  # Q15. 수치형 변수 목록
   num_cols:
     - "age"
     - "income_total"
     - "days_employed"
-
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #  STEP 4.5  전처리 실행 스위치 (On/Off)
@@ -96,54 +75,38 @@ features:
 
   # ── [A] 사용자 정의 전처리 (custom_preprocessor.py) ──
   # Q15-1. 사용자가 직접 짠 전처리 코드 실행 여부
-  #        (이상치 제거, 파생변수 생성 등 custom_preprocessor.py 안의 함수)
   #        → true  : custom_preprocessor.py의 코드를 실행합니다 (기본값)
   #        → false : 사용자 전처리를 건너뜁니다 (이미 가공된 데이터를 쓸 때)
   enable_custom_preprocessing: true
 
   # ── [B] 시스템 자동 전처리 (결측치 · 스케일링 · 인코딩) ──
   # Q15-2. YAML 설정 기반 자동 전처리 실행 여부
-  #        (결측치 채우기, 스케일링, 범주형 인코딩 등 DataPreprocessor가 수행)
   #        → true  : 아래 STEP 5~8의 설정에 따라 자동 전처리합니다 (기본값)
   #        → false : 시스템 전처리를 통째로 건너뜁니다
-  #                  (이미 결측치·스케일링·인코딩이 모두 완료된 데이터를 쓸 때)
   enable_system_preprocessing: true
-
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #  STEP 5.  결측치 처리
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   missing:
-
-    # Q16. 수치형 결측치를 어떻게 채울까요?
-    #      → median    : 중앙값 (이상치에 강함, 기본 권장)
-    #      → mean      : 평균값
-    #      → zero      : 0으로 채움
-    #      → knn       : KNN으로 유사 샘플 기반 추정
-    #      → iterative : 다른 변수를 이용한 반복 추정
-    #      → drop      : 결측 행 삭제
+    # Q16. 수치형 결측치 처리
+    #      → median | mean | zero | knn | iterative | drop
     numeric_strategy: "median"
-
-    # Q17. 범주형 결측치를 어떻게 채울까요?
-    #      → mode     : 최빈값 (가장 흔한 값)
-    #      → constant : 지정한 값으로 채움 (아래 fill_value)
-    #      → drop     : 결측 행 삭제
+    # Q17. 범주형 결측치 처리
+    #      → mode | constant | drop
     categorical_strategy: "mode"
-
     # Q18. constant 선택 시 채울 값
     fill_value: "MISSING"
-
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #  STEP 6.  클래스 불균형 처리
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   imbalance:
-
-    # Q19. 불균형 데이터 보정 방법
-    #      ※ BalancedRF는 자체 언더샘플링이 있으므로 none 권장
+    # Q19. 불균형 보정 방법
     #      ── 오버샘플링 ──
-    #      → none            : 사용 안 함 (BalancedRF 자체가 불균형 전용)
-    #      → smote | adasyn | borderline_smote | random_over
+    #      → none            : 사용 안 함
+    #      → smote           : SMOTE — 합성 소수 오버샘플링 (가장 대표적)
+    #      → adasyn | borderline_smote | random_over
     #      ── 언더샘플링 ──
     #      → random_under | tomek | enn
     #      ── 복합 ──
@@ -154,21 +117,18 @@ features:
     #      → "auto" : 1:1 | 0.5 : 50% | 0.3 : 30% | "minority" | "not majority"
     sampling_strategy: "auto"
 
-
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #  STEP 7.  스케일링 (수치형 정규화)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   scaling:
-
-    # Q20. 스케일링 방법 (트리 모델은 보통 불필요)
-    #      → none     : 사용 안 함 (BalancedRF 기본 권장)
-    #      → standard : 평균 0, 분산 1로 정규화
-    #      → robust   : 중앙값 기준 정규화 (이상치에 강함)
-    #      → minmax   : 0~1 범위로 축소
-    method: "none"
-
+    # Q20. 스케일링 방법
+    #      ※ KNN은 거리 기반이므로 스케일링 절대 필수!
+    #      → standard : 평균 0, 분산 1 (기본 권장)
+    #      → robust   : 중앙값 기준 (이상치에 강함)
+    #      → minmax   : 0~1 범위 축소
+    method: "standard"
     # Q21. 스케일링 대상 컬럼
-    #      → auto : 수치형 전체 자동 선택
+    #      → auto : 수치형 전체 자동
     #      → 직접 지정 예시:
     #        cols:
     #          - "age"
@@ -176,21 +136,15 @@ features:
     #      ※ 존재하지 않는 컬럼명 입력 시 에러가 발생합니다
     cols: "auto"
 
-
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #  STEP 8.  범주형 인코딩
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   encoding:
-
-    # Q22. 범주형 인코딩 방법
-    #      → ordinal : 순서형 숫자로 변환 (BalancedRF 기본 권장)
-    #      → label   : 라벨 인코딩
-    #      → target  : 타겟 평균값으로 변환 (category_encoders 필요)
-    #      → none    : 사용 안 함
+    # Q22. 인코딩 방법
+    #      → ordinal | label | target | none
     method: "ordinal"
-
-    # Q23. 인코딩 대상 컬럼
-    #      → auto : cat_cols 전체 자동 선택
+    # Q23. 인코딩 대상
+    #      → auto : cat_cols 전체
     #      → 직접 지정 예시:
     #        cols:
     #          - "gender"
@@ -198,156 +152,100 @@ features:
     #      ※ 존재하지 않는 컬럼명 입력 시 에러가 발생합니다
     cols: "auto"
 
-
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #  STEP 9.  모델 학습 기본 설정
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 model:
-
-  # ※ 이 파일은 BalancedRandomForest 전용입니다 (변경 불필요)
-  algorithm: "balancedrandomforest"
-
-  # Q24. K-Fold 교차검증 수 (보통 5 또는 10)
+  # ※ 이 파일은 KNN 전용입니다 (변경 불필요)
+  algorithm: "knn"
+  # Q24. K-Fold 교차검증 수
   n_splits: 5
-
   # Q25. 데이터 분할 전략
-  #      → stratified  : 클래스 비율 유지 (분류 기본 권장)
-  #      → kfold       : 단순 랜덤 분할
-  #      → group       : 특정 그룹 단위 분할 (group_col 필요)
-  #      → timeseries  : 시계열 순서 유지 분할
+  #      → stratified | kfold | group | timeseries
   split_strategy: "stratified"
-
-  # Q26. group 전략 시 그룹으로 사용할 컬럼 (그 외엔 null)
+  # Q26. group 전략 시 그룹 컬럼 (그 외엔 null)
   group_col: null
-
   # Q27. K-Fold 셔플 여부
   shuffle: true
-
-  # Q28. 얼리스토핑 patience
-  #      ※ BalancedRF는 얼리스토핑 미지원 — 0 고정
+  # Q28. 얼리스토핑 — KNN은 미지원 (0 고정)
   early_stopping_rounds: 0
 
-
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-#  STEP 10. BalancedRandomForest 고정 하이퍼파라미터
+#  STEP 10. KNN 고정 하이퍼파라미터
 #           (Optuna 탐색 대상이 아닌 값)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   fixed_params:
-
-    # Q29. 병렬 처리 코어 수
-    #      → -1 이면 모든 CPU 코어 사용 (빠름)
-    #      ※ 주의: imbalanced-learn BalancedRF는 GPU 학습을 지원하지 않습니다! (CPU 전용)
+    # Q29. 병렬 처리 코어 수 (-1이면 전체 CPU 사용)
     n_jobs: -1
-
-    # Q30. 분할 기준 함수
-    #      → gini     : 지니 불순도 (기본)
-    #      → entropy  : 정보 이득 (엔트로피)
-    #      → log_loss : 로그 손실
-    criterion: "gini"
-
-    # Q31. 클래스 가중치
-    #      → balanced           : 클래스 비율 반비례 가중치
-    #      → balanced_subsample : 부트스트랩 샘플마다 가중치 재계산
-    #      → null               : 가중치 없음
-    class_weight: "balanced"
-
-    # Q32. 부트스트랩 샘플링 사용 여부
-    bootstrap: true
-
-    # Q33. 언더샘플링 전략 (BalancedRF 고유)
-    #      → auto         : 다수 클래스를 소수 클래스 수준으로 자동 축소
-    #      → all          : 모든 클래스를 리샘플링
-    #      → not minority : 소수 클래스 제외하고 리샘플링
-    # sampling_strategy: "auto"
-
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #  STEP 11. Optuna 자동 하이퍼파라미터 탐색
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   optuna:
-
-    # Q34. Optuna 사용 여부
+    # Q30. Optuna 사용 여부
     enabled: true
-
-    # Q35. 탐색 횟수 (많을수록 정밀, 대신 시간 증가)
+    # Q31. 탐색 횟수
     n_trials: 50
-
-    # Q36. 시간 제한 (초 단위, null이면 무제한)
+    # Q32. 시간 제한 (초, null이면 무제한)
     timeout: null
-
-    # Q37. 탐색 범위 — [최소, 최대] 형식
+    # Q33. 탐색 범위
     params:
-      n_estimators:      [100, 2000]     # 트리 개수
-      max_depth:         [4, 30]         # 트리 깊이
-      min_samples_split: [2, 20]         # 분할 최소 샘플 수
-      min_samples_leaf:  [1, 10]         # 잎 노드 최소 샘플 수
-      max_features:      ["sqrt", "log2", 0.3, 0.5, 0.7, 1.0]
-        # sqrt : 피처 수의 제곱근
-        # log2 : 피처 수의 log2
-        # 숫자 : 전체 대비 비율
-
+      n_neighbors: [3, 50]               # 이웃 수 (K값)
+      weights:     ["uniform", "distance"]
+        # uniform  : 모든 이웃에 동일 가중치
+        # distance : 가까운 이웃에 더 높은 가중치
+      metric:      ["euclidean", "manhattan", "minkowski"]
+      # p:         [1, 2]                # minkowski 전용 (1=맨해튼, 2=유클리드)
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #  STEP 12. 평가 설정
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 evaluation:
-
-  # Q38. Optuna가 최적화할 목표 지표
+  # Q34. Optuna 목표 지표
   #      [분류]  logloss | auc | f1_macro | f1_micro | accuracy
-  #      [회귀]  rmse | mae | r2 | mape
   optuna_target_metric: "f1_macro"
-
-  # Q39. 목표 방향
-  #      → minimize : 값이 작을수록 좋음 (logloss, rmse 등)
-  #      → maximize : 값이 클수록 좋음 (auc, f1, accuracy 등)
+  # Q35. 목표 방향
+  #      → minimize | maximize
   optuna_direction: "maximize"
-
-  # Q40. 최종 리포트에 출력할 지표 목록
-  #      필요한 것만 남기고 주석 처리하세요
+  # Q36. 최종 리포트 지표 목록
   report_metrics:
-    - "accuracy"              # 정확도
-    - "precision_macro"       # 정밀도 (macro 평균)
-    - "recall_macro"          # 재현율 (macro 평균)
-    - "f1_macro"              # F1 (macro) — 불균형 시 권장
-    - "f1_micro"              # F1 (micro)
-    - "roc_auc"               # ROC-AUC
-    - "pr_auc"                # PR-AUC
-    - "logloss"               # Log Loss
-    # - "f1_weighted"         # 가중 F1
-    # - "cohen_kappa"         # Cohen's Kappa
-    # - "matthews_corrcoef"   # MCC
-
-  # Q41. 이진분류 임계값 튜닝 (다중분류 · 회귀는 false)
+    - "accuracy"
+    - "precision_macro"
+    - "recall_macro"
+    - "f1_macro"
+    - "f1_micro"
+    - "roc_auc"
+    - "pr_auc"
+    - "logloss"
+    # - "f1_weighted"
+    # - "cohen_kappa"
+    # - "matthews_corrcoef"
+  # Q37. 이진분류 임계값 튜닝 (다중분류·회귀는 false)
   threshold_tuning:
     enabled: true
-    metric: "f1_macro"             # 최적화 기준 지표
-    search_range: [0.1, 0.9]       # 탐색 범위
-    search_step: 0.01              # 탐색 간격
-
+    metric: "f1_macro"
+    search_range: [0.1, 0.9]
+    search_step: 0.01
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-#  STEP 13. 시각화 설정
-#           (true = 생성 / false = 건너뜀)
+#  STEP 13. 시각화 설정 (true = 생성 / false = 건너뜀)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 visualization:
-
   # --- 기본 차트 ---
   confusion_matrix: true           # 혼동 행렬
-  feature_importance: true         # 피처 중요도 바 차트
-  roc_curve: true                  # ROC 커브 (이진분류)
-  pr_curve: true                   # PR 커브 (이진분류)
+  feature_importance: false        # ※ KNN은 중요도 속성 없음
+  roc_curve: true                  # ROC 커브
+  pr_curve: true                   # PR 커브
   calibration_curve: true          # 확률 교정 곡선
-  prediction_scatter: true         # 예측 확률 산점도 (이진분류)
-  lift_gain_curve: true            # Lift / Gain 커브 (이진분류)
-
-  # --- SHAP 설명력 차트 ---
-  shap_summary: true               # SHAP 요약 (비스웜)
-  shap_waterfall: false            # SHAP 워터폴 (단일 샘플)
-  shap_dependence: false           # SHAP 의존성 (상위 N 피처)
-  partial_dependence: false        # PDP (부분 의존성)
-
+  prediction_scatter: true         # 예측 확률 산점도
+  lift_gain_curve: true            # Lift / Gain 커브
+  # --- SHAP 설명력 차트 (TreeExplainer 미지원 ※) ---
+  shap_summary: false
+  shap_waterfall: false
+  shap_dependence: false
+  partial_dependence: true         # PDP — sklearn 모든 모델 호환
   # --- 차트 세부 옵션 ---
-  shap_max_display: 20             # SHAP 플롯에 표시할 최대 피처 수
-  shap_dependence_features: 5      # 의존성 플롯 상위 N 피처
-  pdp_features: 5                  # PDP 상위 N 피처
-  dpi: 150                         # 저장 이미지 해상도
+  shap_max_display: 20
+  shap_dependence_features: 5
+  pdp_features: 5
+  dpi: 150
