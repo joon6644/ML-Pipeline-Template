@@ -584,7 +584,7 @@ def _compute_fold_score(
 ) -> float:
     """단일 Fold의 지표를 계산합니다."""
     from sklearn.metrics import (
-        log_loss, roc_auc_score, f1_score, accuracy_score,
+        log_loss, roc_auc_score, f1_score, fbeta_score, accuracy_score,
         mean_squared_error, mean_absolute_error,
         precision_score, recall_score,
     )
@@ -609,6 +609,22 @@ def _compute_fold_score(
         return roc_auc_score(y_val, val_proba, multi_class="ovr", average="macro")
     elif metric == "f1_macro":
         return f1_score(y_val, val_pred, average="macro")
+    elif metric == "f1_micro":
+        return f1_score(y_val, val_pred, average="micro")
+    elif metric == "f1_weighted":
+        return f1_score(y_val, val_pred, average="weighted")
+    elif metric == "f2_macro":
+        return fbeta_score(y_val, val_pred, beta=2.0, average="macro")
+    elif metric == "f2_micro":
+        return fbeta_score(y_val, val_pred, beta=2.0, average="micro")
+    elif metric == "f2_weighted":
+        return fbeta_score(y_val, val_pred, beta=2.0, average="weighted")
+    elif metric == "f0.5_macro":
+        return fbeta_score(y_val, val_pred, beta=0.5, average="macro")
+    elif metric == "f0.5_micro":
+        return fbeta_score(y_val, val_pred, beta=0.5, average="micro")
+    elif metric == "f0.5_weighted":
+        return fbeta_score(y_val, val_pred, beta=0.5, average="weighted")
     elif metric == "precision_macro":
         return precision_score(y_val, val_pred, average="macro")
     elif metric == "recall_macro":
@@ -893,9 +909,17 @@ def train_final_model(
                 fold_score = log_loss(y_val_np, fold_oof)
             elif target_metric == "auc" and fold_oof.ndim == 1:
                 fold_score = roc_auc_score(y_val_np, fold_oof)
-            elif target_metric in ("f1_macro",):
+            elif target_metric in ("f1_macro", "f1_micro", "f1_weighted", "f2_macro", "f2_micro", "f2_weighted", "f0.5_macro", "f0.5_micro", "f0.5_weighted"):
+                from sklearn.metrics import f1_score, fbeta_score
                 fold_pred = (fold_oof >= 0.5).astype(int) if fold_oof.ndim == 1 else np.argmax(fold_oof, axis=1)
-                fold_score = f1_score(y_val_np, fold_pred, average="macro")
+                
+                avg = target_metric.split("_")[1]
+                if target_metric.startswith("f1"):
+                    fold_score = f1_score(y_val_np, fold_pred, average=avg)
+                elif target_metric.startswith("f2"):
+                    fold_score = fbeta_score(y_val_np, fold_pred, beta=2.0, average=avg)
+                elif target_metric.startswith("f0.5"):
+                    fold_score = fbeta_score(y_val_np, fold_pred, beta=0.5, average=avg)
             else:
                 fold_score = float(model.score(X_val, y_val))
             fold_scores.append(fold_score)

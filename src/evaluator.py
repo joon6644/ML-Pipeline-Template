@@ -21,9 +21,9 @@ import seaborn as sns
 
 from sklearn.metrics import (
     accuracy_score,
-    precision_score,
     recall_score,
     f1_score,
+    fbeta_score,
     log_loss,
     roc_auc_score,
     roc_curve,
@@ -92,6 +92,17 @@ def calculate_metrics(
         metrics["f1_macro"] = float(f1_score(y_true, y_pred, average="macro", zero_division=0))
         metrics["f1_micro"] = float(f1_score(y_true, y_pred, average="micro", zero_division=0))
         metrics["f1_weighted"] = float(f1_score(y_true, y_pred, average="weighted", zero_division=0))
+        
+        # F2 Score (Recall 가중치 강화)
+        metrics["f2_macro"] = float(fbeta_score(y_true, y_pred, beta=2.0, average="macro", zero_division=0))
+        metrics["f2_micro"] = float(fbeta_score(y_true, y_pred, beta=2.0, average="micro", zero_division=0))
+        metrics["f2_weighted"] = float(fbeta_score(y_true, y_pred, beta=2.0, average="weighted", zero_division=0))
+        
+        # F0.5 Score (Precision 가중치 강화)
+        metrics["f0.5_macro"] = float(fbeta_score(y_true, y_pred, beta=0.5, average="macro", zero_division=0))
+        metrics["f0.5_micro"] = float(fbeta_score(y_true, y_pred, beta=0.5, average="micro", zero_division=0))
+        metrics["f0.5_weighted"] = float(fbeta_score(y_true, y_pred, beta=0.5, average="weighted", zero_division=0))
+        
         metrics["cohen_kappa"] = float(cohen_kappa_score(y_true, y_pred))
 
         # ── 확률 기반 지표 ──

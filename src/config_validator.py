@@ -34,7 +34,12 @@ _VALID_IMBALANCE_METHODS = {
     "none", "smote", "adasyn", "borderline_smote", "random_over",
     "random_under", "tomek", "enn", "smote_tomek", "smote_enn",
 }
-_VALID_OPTUNA_METRICS = {"logloss", "auc", "f1_macro", "f1_micro", "accuracy", "rmse", "mae", "r2", "mape"}
+_VALID_OPTUNA_METRICS = {
+    "logloss", "auc", "accuracy", "rmse", "mae", "r2", "mape",
+    "f1_macro", "f1_micro", "f1_weighted",
+    "f2_macro", "f2_micro", "f2_weighted",
+    "f0.5_macro", "f0.5_micro", "f0.5_weighted",
+}
 _VALID_OPTUNA_DIRECTIONS = {"minimize", "maximize"}
 
 
