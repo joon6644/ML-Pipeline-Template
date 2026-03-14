@@ -251,7 +251,12 @@ class DataPreprocessor:
                 elif encoding_method == "target":
                     try:
                         import category_encoders as ce
-                        self._encoder = ce.TargetEncoder(cols=self._encoder_cols, smoothing=10)
+                        self._encoder = ce.TargetEncoder(
+                            cols=self._encoder_cols,
+                            smoothing=10,
+                            handle_missing="value",   # 결측치 → 전체 평균으로 안전 매핑
+                            handle_unknown="value",   # OOV  → 전체 평균으로 안전 매핑
+                        )
                         
                         # 타겟값(y)이 누락된 경우 작동 불가
                         if y is None:

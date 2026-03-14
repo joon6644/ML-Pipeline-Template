@@ -37,6 +37,7 @@ class TrainerResult:
     models: list = field(default_factory=list)  # 각 Fold 모델 리스트
     best_params: dict = field(default_factory=dict)
     feature_names: list = field(default_factory=list)
+    fold_scores: list = field(default_factory=list)  # 각 Fold의 검증 점수
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -703,9 +704,13 @@ def run_optuna_tuning(
     groups = X[group_col] if group_col and group_col in X.columns else None
 
     cat_cols = [c for c in feat_cfg["cat_cols"] if c in X.columns]
-    needs_encoding = algorithm in ("xgboost", "randomforest", "balancedrandomforest",
-                                   "easyensemble", "logistic", "decisiontree",
-                                   "svm", "knn", "naivebayes")
+    # CatBoost / LightGBM은 내부적으로 범주형을 직접 처리하므로
+    # 시스템 LabelEncoding을 우회합니다 (네이티브 범주형 처리 시 성능 손실 방지)
+    needs_encoding = algorithm in (
+        "xgboost", "randomforest", "balancedrandomforest",
+        "easyensemble", "logistic", "decisiontree",
+        "svm", "knn", "naivebayes",
+    )
 
     suggest_fn = _SUGGEST_FN_MAP[algorithm]
 
@@ -804,9 +809,13 @@ def train_final_model(
     groups = X[group_col] if group_col and group_col in X.columns else None
 
     cat_cols = [c for c in feat_cfg["cat_cols"] if c in X.columns]
-    needs_encoding = algorithm in ("xgboost", "randomforest", "balancedrandomforest",
-                                   "easyensemble", "stacking", "logistic", "decisiontree",
-                                   "svm", "knn", "naivebayes")
+    # CatBoost / LightGBM은 내부적으로 범주형을 직접 처리하므로
+    # 시스템 LabelEncoding을 우회합니다 (네이티브 범주형 처리 시 성능 손실 방지)
+    needs_encoding = algorithm in (
+        "xgboost", "randomforest", "balancedrandomforest",
+        "easyensemble", "stacking", "logistic", "decisiontree",
+        "svm", "knn", "naivebayes",
+    )
 
     # 파라미터 병합
     params = {**fixed_params, **(best_params or {})}
@@ -824,6 +833,7 @@ def train_final_model(
         oof_preds = np.zeros(len(X))
 
     models = []
+    fold_scores = []
 
     logger.info(f"최종 K-Fold 학습 시작 (algorithm={algorithm}, n_splits={n_splits}, strategy={split_strategy})")
 
@@ -871,6 +881,28 @@ def train_final_model(
 
         models.append(model)
 
+        # Fold 검증 점수 계산 및 기록
+        try:
+            from sklearn.metrics import log_loss, roc_auc_score, f1_score
+            eval_cfg = get_evaluation_config(config)
+            target_metric = eval_cfg.get("optuna_target_metric", "logloss")
+            y_val_np = y_val.values if hasattr(y_val, 'values') else y_val
+            val_idx_list = list(val_idx)
+            fold_oof = oof_preds[val_idx_list] if oof_preds.ndim == 1 else oof_preds[val_idx_list]
+            if target_metric == "logloss" and fold_oof.ndim <= 2:
+                fold_score = log_loss(y_val_np, fold_oof)
+            elif target_metric == "auc" and fold_oof.ndim == 1:
+                fold_score = roc_auc_score(y_val_np, fold_oof)
+            elif target_metric in ("f1_macro",):
+                fold_pred = (fold_oof >= 0.5).astype(int) if fold_oof.ndim == 1 else np.argmax(fold_oof, axis=1)
+                fold_score = f1_score(y_val_np, fold_pred, average="macro")
+            else:
+                fold_score = float(model.score(X_val, y_val))
+            fold_scores.append(fold_score)
+            logger.info(f"  Fold {fold_idx} {target_metric}: {fold_score:.6f}")
+        except Exception:
+            pass  # 점수 계산 실패 시 건너뜀
+
         # 모델 저장
         model_dir = paths.get("model_dir", "models")
         ensure_dir(model_dir)
@@ -884,12 +916,19 @@ def train_final_model(
         logger.info(f"  모델 저장: {save_path}")
 
     logger.info("K-Fold 학습 완료")
+    if fold_scores:
+        import numpy as _np
+        logger.info(
+            f"Fold 성능 요약: {_np.mean(fold_scores):.6f} "
+            f"( ± {_np.std(fold_scores):.6f} )"
+        )
 
     return TrainerResult(
         oof_preds=oof_preds,
         models=models,
         best_params=params,
         feature_names=X.columns.tolist(),
+        fold_scores=fold_scores,
     )
 
 
@@ -926,9 +965,13 @@ def train_full_model(
     fixed_params = model_cfg["fixed_params"].copy()
 
     cat_cols = [c for c in feat_cfg["cat_cols"] if c in X_train.columns]
-    needs_encoding = algorithm in ("xgboost", "randomforest", "balancedrandomforest",
-                                   "easyensemble", "stacking", "logistic", "decisiontree",
-                                   "svm", "knn", "naivebayes")
+    # CatBoost / LightGBM은 내부적으로 범주형을 직접 처리하므로
+    # 시스템 LabelEncoding을 우회합니다 (네이티브 범주형 처리 시 성능 손실 방지)
+    needs_encoding = algorithm in (
+        "xgboost", "randomforest", "balancedrandomforest",
+        "easyensemble", "stacking", "logistic", "decisiontree",
+        "svm", "knn", "naivebayes",
+    )
 
     # DataPreprocessor: 전체 훈련 데이터로 fit
     dp = DataPreprocessor(config)

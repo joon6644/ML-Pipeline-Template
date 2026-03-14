@@ -245,6 +245,122 @@ def plot_pr_curve(
     logger.info(f"PR Curve 저장: {save_path}")
 
 
+def plot_multiclass_roc(
+    y_true: np.ndarray,
+    y_proba: np.ndarray,
+    save_path: str | Path,
+    dpi: int = 150,
+) -> None:
+    """다중 분류용 OvR(One-vs-Rest) ROC Curve를 시각화합니다.
+
+    각 클래스별 ROC 곡선과 Macro 평균 ROC 곡선을 하나의 그래프에 그립니다.
+
+    Args:
+        y_true: 실제 라벨 (정수 인코딩된 클래스)
+        y_proba: 각 클래스별 예측 확률 (shape: n_samples x n_classes)
+        save_path: 저장 경로
+        dpi: 이미지 해상도
+    """
+    from sklearn.preprocessing import label_binarize
+    save_path = Path(save_path)
+    ensure_dir(save_path.parent)
+
+    classes = sorted(np.unique(y_true))
+    n_classes = len(classes)
+
+    # 이진화 (OvR 방식)
+    y_bin = label_binarize(y_true, classes=classes)
+
+    fig, ax = plt.subplots(figsize=(9, 7))
+    colors = plt.cm.tab10(np.linspace(0, 1, n_classes))  # type: ignore
+
+    all_fpr = np.unique(np.concatenate([
+        roc_curve(y_bin[:, i], y_proba[:, i])[0] for i in range(n_classes)
+    ]))
+    mean_tpr = np.zeros_like(all_fpr)
+
+    for i, (cls, color) in enumerate(zip(classes, colors)):
+        fpr, tpr, _ = roc_curve(y_bin[:, i], y_proba[:, i])
+        auc_val = roc_auc_score(y_bin[:, i], y_proba[:, i])
+        ax.plot(fpr, tpr, lw=1.5, color=color, alpha=0.8,
+                label=f"Class {cls} (AUC = {auc_val:.3f})")
+        mean_tpr += np.interp(all_fpr, fpr, tpr)
+
+    mean_tpr /= n_classes
+    macro_auc = roc_auc_score(y_bin, y_proba, multi_class="ovr", average="macro")
+    ax.plot(all_fpr, mean_tpr, color="black", lw=2.5, linestyle="--",
+            label=f"Macro avg (AUC = {macro_auc:.3f})")
+    ax.plot([0, 1], [0, 1], color="gray", lw=1, linestyle=":")
+
+    ax.set_xlim([0.0, 1.0])
+    ax.set_ylim([0.0, 1.05])
+    ax.set_xlabel("False Positive Rate")
+    ax.set_ylabel("True Positive Rate")
+    ax.set_title(f"Multi-class ROC Curve (OvR, {n_classes} classes)")
+    ax.legend(loc="lower right", fontsize=9)
+    fig.tight_layout()
+    fig.savefig(save_path, dpi=dpi)
+    plt.close(fig)
+    logger.info(f"Multi-class ROC Curve 저장: {save_path}")
+
+
+def plot_fold_scores(
+    fold_scores: list[float],
+    save_path: str | Path,
+    metric_name: str = "score",
+    dpi: int = 150,
+) -> None:
+    """K-Fold 각 Fold의 성능 점수를 시각화합니다.
+
+    박스플롯 + 각 Fold 점수 산점도 + 평균선을 함께 그립니다.
+
+    Args:
+        fold_scores: Fold별 성능 점수 리스트
+        save_path: 저장 경로
+        metric_name: 지표 이름 (y축 레이블 및 제목에 표시)
+        dpi: 이미지 해상도
+    """
+    save_path = Path(save_path)
+    ensure_dir(save_path.parent)
+
+    scores = np.array(fold_scores)
+    n_folds = len(scores)
+    mean_score = scores.mean()
+    std_score = scores.std()
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+
+    # 박스플롯
+    bp = ax.boxplot(scores, patch_artist=True, widths=0.4,
+                    boxprops=dict(facecolor="steelblue", alpha=0.4),
+                    medianprops=dict(color="navy", linewidth=2))
+
+    # 각 Fold 점수 산점도 (jitter)
+    jitter = np.random.uniform(-0.1, 0.1, n_folds)
+    ax.scatter(np.ones(n_folds) + jitter, scores,
+               color="steelblue", s=60, zorder=5, alpha=0.8)
+
+    # Fold 번호 레이블
+    for i, score in enumerate(scores):
+        ax.annotate(f"F{i+1}={score:.4f}", (1 + jitter[i], score),
+                    textcoords="offset points", xytext=(8, 0),
+                    fontsize=8, color="dimgray")
+
+    # 평균선
+    ax.axhline(mean_score, color="crimson", linestyle="--", lw=1.5,
+               label=f"Mean = {mean_score:.4f} ± {std_score:.4f}")
+
+    ax.set_xticks([1])
+    ax.set_xticklabels([f"{n_folds}-Fold CV"])
+    ax.set_ylabel(metric_name)
+    ax.set_title(f"K-Fold 성능 분포 ({metric_name})")
+    ax.legend(loc="best")
+    fig.tight_layout()
+    fig.savefig(save_path, dpi=dpi)
+    plt.close(fig)
+    logger.info(f"Fold 성능 분포 저장: {save_path}")
+
+
 def plot_feature_importance(
     model,
     feature_names: list[str],
@@ -719,6 +835,11 @@ def evaluate_and_visualize(
     if task_type == "classification" and is_binary and vis_cfg.get("roc_curve", True):
         proba_pos = y_proba[:, 1] if y_proba.ndim == 2 else y_proba
         plot_roc_curve(y_true, proba_pos, figure_dir / "roc_curve.png", dpi)
+
+    # ── 시각화: 다중 분류 ROC Curve (OvR) ──
+    is_multiclass = (y_proba is not None) and (y_proba.ndim == 2 and y_proba.shape[1] > 2)
+    if task_type == "classification" and is_multiclass and vis_cfg.get("roc_curve", True):
+        plot_multiclass_roc(y_true, y_proba, figure_dir / "roc_curve_multiclass.png", dpi)
 
     # ── 시각화: PR Curve ──
     if task_type == "classification" and is_binary and vis_cfg.get("pr_curve", True):

@@ -19,6 +19,11 @@ project:
   #     → classification : 분류 (이진 · 다중 모두 포함)
   #     → regression     : 회귀 (연속값 예측)
   task_type: "classification"
+  # MLflow 실험 트래킹 설정
+  # mlruns/ 폴더에 로컬 저장 (기본값). 원격 서버 사용 시 http://서버주소:5000 으로 변경
+  mlflow_tracking_uri: "file:./mlruns"
+  # false로 설정하면 MLflow 로깅이 완전히 비활성화됩니다
+  mlflow_enabled: true
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

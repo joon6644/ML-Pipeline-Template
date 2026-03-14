@@ -37,6 +37,13 @@ def load_config(config_path: str) -> dict[str, Any]:
     with open(config_path, "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
 
+    # 설정 유효성 검증 (오타/범위 밖 값 조기 감지)
+    try:
+        from src.config_validator import validate_config
+        validate_config(config)
+    except ImportError:
+        pass  # config_validator 없으면 건너뜀
+
     # 경로 섹션이 있으면 디렉토리 자동 생성
     _ensure_output_dirs(config)
     return config

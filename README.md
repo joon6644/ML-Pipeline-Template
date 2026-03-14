@@ -15,27 +15,26 @@ ML_Pipeline_Template/
 │   ├── interim/            # 훈련/홀드아웃 분할 데이터 (parquet)
 │   └── processed/          # 전처리 완료 데이터 (parquet)
 │
-├── configs/                # 모델별 YAML 설정 파일
-│   ├── catboost.yaml
-│   ├── lgbm.yaml
-│   ├── randomforest.yaml
-│   └── xgboost.yaml
+├── configs/                # 모델별 YAML 설정 파일 (12개)
 │
 ├── src/                    # 핵심 파이프라인 모듈
-│   ├── __init__.py
 │   ├── config.py           # YAML 설정 로더
 │   ├── utils.py            # 유틸리티 (시드, 로깅, I/O, Timer)
 │   ├── preprocessor.py     # 전처리 + DataPreprocessor + Hold-out 분할
 │   ├── trainer.py          # K-Fold 학습 · Optuna 튜닝 · 최종 학습
-│   └── evaluator.py        # 지표 계산 · 시각화 · 리포트 생성
+│   ├── evaluator.py        # 지표 계산 · 시각화 · 리포트 생성
+│   └── mlflow_utils.py     # MLflow 실험 트래킹 헬퍼
 │
+├── tests/                  # 단위 테스트 (pytest)
 ├── notebooks/              # EDA 및 실험용 노트북
+├── mlruns/                 # MLflow 실험 로그 (자동 생성)
 ├── models/                 # 학습된 모델 저장소
-├── results/                # 평가 결과 · 시각화 · 리포트
+├── results/                # 평가 결과 · 시각화 · 리포튤
 │   ├── figures/
 │   └── submissions/
 │
-├── run_pipeline.py         # 메인 실행 스크립트 (3가지 모드)
+├── run_pipeline.py         # 모델 학습 + 평가 (3가지 모드)
+├── predict.py              # 저장된 모델로 새 데이터 예측 (추론 스크립트)
 ├── requirements.txt
 └── .gitignore
 ```
@@ -113,10 +112,28 @@ YAML의 `model.split_strategy`를 변경하여 데이터 특성에 맞는 교차
 ```bash
 # 전체 훈련 데이터로 최종 모델 학습 → 홀드아웃 평가 1회
 python run_pipeline.py -c configs/catboost.yaml --final-eval
+
+# 실행 결과물을 타임스탬프로 구분하여 덮어쓰기 방지
+python run_pipeline.py -c configs/catboost.yaml --final-eval --run-id catboost_v2
 ```
 
 > 📊 결과: `results/evaluation_report.txt`, `results/figures/*`  
 > 🧠 모델: `models/{algorithm}_final.*`
+
+### 8단계: 새 데이터 예측 (추론)
+
+학습이 완료된 후 저장된 모델과 전처리기를 사용해 새 데이터를 예측합니다.
+
+```bash
+# 기본 예측 (results/submissions/ 에 저장)
+python predict.py -c configs/catboost.yaml -i data/raw/test.csv
+
+# 임계값 지정 + 확률 출력
+python predict.py -c configs/catboost.yaml -i data/raw/test.csv --threshold 0.45 --proba
+
+# 결과 경로 직접 지정
+python predict.py -c configs/catboost.yaml -i data/raw/test.csv -o results/my_prediction.csv
+```
 
 ---
 
@@ -152,8 +169,10 @@ python run_pipeline.py -c configs/catboost.yaml --final-eval
 |------|-------------|
 | Confusion Matrix | `confusion_matrix: true` |
 | Feature Importance (Bar) | `feature_importance: true` |
-| ROC Curve | `roc_curve: true` |
+| ROC Curve (이진 분류) | `roc_curve: true` |
+| ROC Curve (다중 분류, OvR) | `roc_curve: true` |
 | Precision-Recall Curve | `pr_curve: true` |
+| **K-Fold Fold별 성능 박스플롯** | 자동 생성 (`fold_scores.png`) |
 | Calibration Curve | `calibration_curve: true` |
 | Prediction Scatter (확률 산점도) | `prediction_scatter: true` |
 | Lift / Gain Curve | `lift_gain_curve: true` |
@@ -161,6 +180,34 @@ python run_pipeline.py -c configs/catboost.yaml --final-eval
 | SHAP Waterfall (단일 샘플 기여도) | `shap_waterfall: true` |
 | SHAP Dependence (피처별 산점도) | `shap_dependence: true` |
 | PDP (Partial Dependence Plot) | `partial_dependence: true` |
+
+---
+
+## 🧪 MLflow 실험 트래킹
+
+이 파이프라인은 MLflow를 통해 실험 파라미터, 지표, 아티팩트를 자동 기록합니다.
+
+```bash
+# 파이프라인 실행 (mlflow_enabled: true 설정 시 자동 기록)
+python run_pipeline.py -c configs/catboost.yaml
+
+# 실험 결과를 웹 UI로 확인
+.venv\Scripts\mlflow ui --backend-store-uri file:./mlruns
+# → http://localhost:5000 접속
+```
+
+**YAML 설정** (`configs/*.yaml`):
+```yaml
+project:
+  mlflow_tracking_uri: "file:./mlruns"  # 로컬 저장 (기본값)
+  mlflow_enabled: true                   # false면 MLflow 완전 비활성화
+```
+
+**기록 항목:**
+- 파이프라인 설정 파라미터 (algorithm, n_splits, missing_strategy 등)
+- Optuna 최적 하이퍼파라미터
+- 평가 지표 (F1, AUC, LogLoss 등)
+- 결과 그래프 및 모델 파일 (artifacts)
 
 ---
 
@@ -180,13 +227,6 @@ K-Fold 루프 내부:
 - 고급 대치법인 `knn`, `iterative` 회귀대치 옵션 추가
 - 클래스 불균형이 극심한 경우 훈련 데이터에만 오버샘플링을 적용하는 `method: "smote"` 옵션 내장
 - 홀드아웃 데이터는 `--final-eval` 시에만 활용
-
----
-
-## 🧪 MLflow 로컬 실험 추적
-이 파이프라인은 `mlflow` 패키지가 설치되어 있다면, 튜닝이 마무리된 후 결과를 **자동으로 로컬 저장소에 기록**합니다.
-- YAML 내 `project.mlflow_uri` (기본: `file:./mlruns`), `project.name`으로 실험 공간을 자동 생성
-- Optuna에 의한 최적 하이퍼 파라미터, 평가 지표들을 스냅샷으로 영구 저장해 언제든 웹 UI(`mlflow ui`)로 비교 분석 가능
 
 ---
 

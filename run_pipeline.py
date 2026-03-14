@@ -33,6 +33,7 @@ from src.utils import set_seed, get_logger, load_dataframe, save_dataframe, Time
 from src.preprocessor import preprocess_pipeline, split_holdout, DataPreprocessor
 from src.trainer import run_optuna_tuning, train_final_model, train_full_model
 from src.evaluator import evaluate_and_visualize, calculate_metrics, generate_report, find_best_threshold
+from src.mlflow_utils import MLflowTracker
 
 
 def parse_args() -> argparse.Namespace:
@@ -79,6 +80,12 @@ def parse_args() -> argparse.Namespace:
         metavar="METRIC",
         help="이진 분류에서 주어진 지표(예: f1_macro)를 기준 최적의 Threshold를 찾습니다.",
     )
+    parser.add_argument(
+        "--run-id",
+        type=str,
+        default=None,
+        help="실험 실행 ID. 입력하지 않으면 현재 시각으로 자동 생성 (결과 덮어쓰기 방지).",
+    )
     return parser.parse_args()
 
 
@@ -113,6 +120,30 @@ def run_development(config: dict, args, logger) -> None:
 
     target_col = data_cfg.get("target_col", "target")
     id_col = data_cfg.get("id_col")
+    algorithm = model_cfg["algorithm"]      # MLflow에서 사용
+    task_type = model_cfg["task_type"]      # MLflow에서 사용
+
+    # ── run-id: 타임스탬프 기반 버전 관리 ──
+    if args.run_id:
+        run_id = args.run_id
+    else:
+        from datetime import datetime
+        run_id = datetime.now().strftime("%Y%m%d_%H%M")
+
+    # run_id를 결과/모델 경로에 반영 (원본 paths 변경 없이 로컬 변수로 override)
+    figure_dir_orig = paths.get("figure_dir", "results/figures")
+    result_dir_orig = paths.get("result_dir", "results")
+    model_dir_orig = paths.get("model_dir", "models")
+
+    paths_local = dict(paths)
+    paths_local["figure_dir"] = f"{figure_dir_orig}/{run_id}"
+    paths_local["result_dir"] = result_dir_orig  # report는 공용
+    paths_local["model_dir"] = model_dir_orig     # 모델은 공용 (predict.py 호환)
+
+    from src.utils import ensure_dir
+    ensure_dir(paths_local["figure_dir"])
+
+    logger.info(f"실행 ID: {run_id} (그래프: {paths_local['figure_dir']}/)")
 
     logger.info("=" * 60)
     logger.info("  🔬 [2~5단계] K-Fold 개발 모드")
@@ -158,96 +189,96 @@ def run_development(config: dict, args, logger) -> None:
     logger.info(f"피처 수: {X.shape[1]}, 샘플 수: {X.shape[0]}")
     logger.info(f"타겟 분포:\n{y.value_counts().to_string()}")
 
-    # ── MLflow 추적 시작 (선택) ──
-    use_mlflow = False
-    try:
-        import mlflow
-        use_mlflow = True
-        mlflow_uri = config.get("project", {}).get("mlflow_uri", "file:./mlruns")
-        mlflow.set_tracking_uri(mlflow_uri)
-        mlflow.set_experiment(config.get("project", {}).get("name", "my_project"))
-        mlflow.start_run(run_name=f"{algorithm}_dev")
-        mlflow.log_params({
-            "algorithm": algorithm,
-            "task_type": task_type,
-            "split_strategy": model_cfg.get("split_strategy", "stratified")
-        })
-    except ImportError:
-        logger.info("MLflow가 설치되지 않아 실험 추적 로깅을 건너뜁니다.")
+    # ── MLflow 실험 트래킹 ──
+    tracker = MLflowTracker(config)
 
-    # ── Optuna 튜닝 ──
-    best_params = None
-    optuna_cfg = model_cfg.get("optuna", {})
+    with tracker.start_run(run_name=f"{algorithm}_dev"):
+        # 설정 파라미터 기록
+        tracker.log_config_params()
 
-    if not args.skip_tuning and optuna_cfg.get("enabled", True):
-        with Timer("Optuna 튜닝", logger):
-            best_params = run_optuna_tuning(X, y, config)
-    else:
-        logger.info("Optuna 튜닝 건너뜀 — 고정 파라미터로 학습합니다.")
+        # ── Optuna 튜닝 ──
+        best_params = None
+        optuna_cfg = model_cfg.get("optuna", {})
 
-    # ── K-Fold 학습 ──
-    with Timer("K-Fold 학습", logger):
-        result = train_final_model(X, y, config, best_params)
+        if not args.skip_tuning and optuna_cfg.get("enabled", True):
+            with Timer("Optuna 튜닝", logger):
+                best_params = run_optuna_tuning(X, y, config)
+        else:
+            logger.info("Optuna 튜닝 건너뜀 — 고정 파라미터로 학습합니다.")
 
-    # ── --tune-threshold: 임계값 수동 튜닝 ──
-    best_threshold = None
-    if args.tune_threshold and model_cfg.get("task_type") == "classification":
-        logger.info(f"임계값 튜닝 시작 (목표 지표: {args.tune_threshold})...")
-        best_threshold, best_score = find_best_threshold(
-            y_true=y.values,
-            y_proba_positive=result.oof_preds,
-            metric=args.tune_threshold,
-            search_range=(0.1, 0.9),
-            search_step=0.01,
-        )
-        # OOF 예측 업데이트 (최적 임계값 적용)
-        result.oof_preds = (result.oof_preds >= best_threshold).astype(int)
-        
-        # 임계값 저장 (최종 평가용)
-        threshold_path = Path(paths.get("model_dir", "models")) / "best_threshold.pkl"
-        joblib.dump(best_threshold, threshold_path)
-        logger.info(f"Best threshold 저장: {threshold_path}")
+        # ── K-Fold 학습 ──
+        with Timer("K-Fold 학습", logger):
+            result = train_final_model(X, y, config, best_params)
 
-    # ── OOF 평가 & 시각화 ──
-    with Timer("평가 & 시각화", logger):
-        metrics = evaluate_and_visualize(
-            y_true=y.values,
-            oof_preds=result.oof_preds,
-            models=result.models,
-            feature_names=result.feature_names,
-            X=X,
-            config=config,
-            best_params=best_params,
-            best_threshold=best_threshold,
-        )
+        # ── --tune-threshold: 임계값 수동 튜닝 ──
+        best_threshold = None
+        if args.tune_threshold and task_type == "classification":
+            logger.info(f"임계값 튜닝 시작 (목표 지표: {args.tune_threshold})...")
+            best_threshold, best_score = find_best_threshold(
+                y_true=y.values,
+                y_proba_positive=result.oof_preds,
+                metric=args.tune_threshold,
+                search_range=(0.1, 0.9),
+                search_step=0.01,
+            )
+            # OOF 예측 업데이트 (최적 임계값 적용)
+            result.oof_preds = (result.oof_preds >= best_threshold).astype(int)
 
-    # ── best_params 저장 (최종 평가 시 재사용) ──
-    if best_params:
-        params_path = Path(paths.get("model_dir", "models")) / "best_params.pkl"
-        joblib.dump(best_params, params_path)
-        logger.info(f"Best params 저장: {params_path}")
+            # 임계값 저장 (최종 평가용)
+            threshold_path = Path(paths.get("model_dir", "models")) / "best_threshold.pkl"
+            joblib.dump(best_threshold, threshold_path)
+            logger.info(f"Best threshold 저장: {threshold_path}")
+
+        # ── OOF 평가 & 시각화 ──
+        with Timer("평가 & 시각화", logger):
+            metrics = evaluate_and_visualize(
+                y_true=y.values,
+                oof_preds=result.oof_preds,
+                models=result.models,
+                feature_names=result.feature_names,
+                X=X,
+                config=config,
+                best_params=best_params,
+                best_threshold=best_threshold,
+            )
+
+        # ── Fold별 성능 박스플롯 시각화 ──
+        if result.fold_scores:
+            from src.evaluator import plot_fold_scores
+            eval_cfg = config.get("evaluation", {})
+            metric_name = eval_cfg.get("optuna_target_metric", "score")
+            figure_dir = Path(paths.get("figure_dir", "results/figures"))
+            plot_fold_scores(
+                result.fold_scores,
+                figure_dir / "fold_scores.png",
+                metric_name=metric_name,
+                dpi=config.get("visualization", {}).get("dpi", 150),
+            )
+
+        # ── best_params 저장 (최종 평가 시 재사용) ──
+        if best_params:
+            params_path = Path(paths.get("model_dir", "models")) / "best_params.pkl"
+            joblib.dump(best_params, params_path)
+            logger.info(f"Best params 저장: {params_path}")
+
+        # ── MLflow: 지표 / Optuna 파라미터 / 아티팩트 기록 ──
+        tracker.log_metrics(metrics)
+        tracker.log_best_params(best_params)
+        tracker.log_threshold(best_threshold)
+        tracker.log_artifacts(paths.get("figure_dir", "results/figures"))
+        tracker.log_artifacts(paths.get("result_dir", "results"))
+        tracker.log_model_artifacts(paths.get("model_dir", "models"))
 
     logger.info("=" * 60)
     logger.info("  ✅ K-Fold 개발 완료!")
     logger.info("  만족스러우면 --final-eval로 최종 평가를 진행하세요.")
     logger.info("=" * 60)
 
-    # ── MLflow 추적 종료 ──
-    if use_mlflow:
-        import mlflow
-        mlflow.log_metrics(metrics)
-        if best_params:
-            for k, v in best_params.items():
-                mlflow.log_param(f"optuna_{k}", v)
-        if best_threshold is not None:
-            mlflow.log_param("best_threshold", best_threshold)
-        mlflow.end_run()
-
 
 # ═══════════════════════════════════════════════════════════════
 #  모드 3: 최종 평가 (Hold-out)
 # ═══════════════════════════════════════════════════════════════
-def run_final_eval(config: dict, logger) -> None:
+def run_final_eval(config: dict, args, logger) -> None:
     """전체 훈련 데이터로 최종 모델 학습 → 홀드아웃 평가 → 결과 저장."""
     paths = get_paths(config)
     model_cfg = get_model_params(config)
@@ -259,8 +290,27 @@ def run_final_eval(config: dict, logger) -> None:
     algorithm = model_cfg["algorithm"]
     task_type = model_cfg["task_type"]
 
+    # ── run-id: 타임스탬프 기반 버전 관리 ──
+    if args.run_id:
+        run_id = args.run_id
+    else:
+        from datetime import datetime
+        run_id = datetime.now().strftime("%Y%m%d_%H%M")
+
+    figure_dir_orig = paths.get("figure_dir", "results/figures")
+    result_dir_orig = paths.get("result_dir", "results")
+    model_dir_orig = paths.get("model_dir", "models")
+
+    paths_local = dict(paths)
+    paths_local["figure_dir"] = f"{figure_dir_orig}/{run_id}"
+    paths_local["result_dir"] = result_dir_orig
+    paths_local["model_dir"] = model_dir_orig
+
+    from src.utils import ensure_dir
+    ensure_dir(paths_local["figure_dir"])
+
     logger.info("=" * 60)
-    logger.info("  🏆 [6단계] 최종 평가 모드")
+    logger.info(f"  🏆 [6단계] 최종 평가 모드 (Run ID: {run_id})")
     logger.info("=" * 60)
 
     # ── 훈련/홀드아웃 데이터 로드 ──
@@ -289,25 +339,11 @@ def run_final_eval(config: dict, logger) -> None:
     X_holdout = holdout_df[feature_cols]
     y_holdout = holdout_df[target_col]
 
-    # ── MLflow 추적 시작 (선택) ──
-    use_mlflow = False
-    try:
-        import mlflow
-        use_mlflow = True
-        mlflow_uri = config.get("project", {}).get("mlflow_uri", "file:./mlruns")
-        mlflow.set_tracking_uri(mlflow_uri)
-        mlflow.set_experiment(config.get("project", {}).get("name", "my_project"))
-        mlflow.start_run(run_name=f"{algorithm}_final")
-        mlflow.log_params({
-            "algorithm": algorithm,
-            "task_type": task_type,
-            "mode": "final_holdout"
-        })
-    except ImportError:
-        pass
+    # ── MLflow 실험 트래킹 ──
+    tracker = MLflowTracker(config)
 
     # ── 저장된 best_params 로드 (있으면) ──
-    params_path = Path(paths.get("model_dir", "models")) / "best_params.pkl"
+    params_path = Path(paths_local["model_dir"]) / "best_params.pkl"
     best_params = None
     if params_path.exists():
         best_params = joblib.load(params_path)
@@ -342,7 +378,7 @@ def run_final_eval(config: dict, logger) -> None:
             holdout_preds_raw = holdout_proba[:, 1] if holdout_proba.ndim == 2 else holdout_proba
             
             # ── 임계값 수동 튜닝이 저장되어 있으면 적용 ──
-            threshold_path = Path(paths.get("model_dir", "models")) / "best_threshold.pkl"
+            threshold_path = Path(paths_local["model_dir"]) / "best_threshold.pkl"
             if threshold_path.exists():
                 best_threshold = joblib.load(threshold_path)
                 logger.info(f"저장된 Best threshold ({best_threshold:.4f}) 로드 및 적용")
@@ -353,34 +389,36 @@ def run_final_eval(config: dict, logger) -> None:
         holdout_preds_raw = model.predict(X_holdout_transformed)
 
     # ── 홀드아웃 평가 ──
-    with Timer("홀드아웃 평가 & 시각화", logger):
-        metrics = evaluate_and_visualize(
-            y_true=y_holdout.values,
-            oof_preds=holdout_preds_raw,
-            models=[model],
-            feature_names=feature_cols,
-            X=X_holdout_transformed,
-            config=config,
-            best_params=best_params,
-            best_threshold=best_threshold,
-        )
+    with tracker.start_run(run_name=f"{algorithm}_final"):
+        # 설정 파라미터 기록
+        tracker.log_config_params()
+        tracker.log_best_params(best_params)
+
+        with Timer("홀드아웃 평가 & 시각화", logger):
+            metrics = evaluate_and_visualize(
+                y_true=y_holdout.values,
+                oof_preds=holdout_preds_raw,
+                models=[model],
+                feature_names=feature_cols,
+                X=X_holdout_transformed,
+                config=config,
+                best_params=best_params,
+                best_threshold=best_threshold,
+            )
+
+        # ── MLflow: 지표 / 임계값 / 아티팩트 기록 ──
+        tracker.log_metrics(metrics)
+        tracker.log_threshold(best_threshold)
+        tracker.log_artifacts(paths_local["figure_dir"])
+        tracker.log_artifacts(paths_local["result_dir"])
+        tracker.log_model_artifacts(paths_local["model_dir"])
 
     logger.info("=" * 60)
     logger.info("  🏆 최종 평가 완료!")
-    logger.info(f"  최종 모델: models/{algorithm}_final.*")
-    logger.info(f"  평가 결과: results/evaluation_report.txt")
+    logger.info(f"  최종 모델: {paths_local['model_dir']}/{algorithm}_final.*")
+    logger.info(f"  평가 결과: {paths_local['result_dir']}/evaluation_report.txt")
+    logger.info(f"  시각화 차트: {paths_local['figure_dir']}/")
     logger.info("=" * 60)
-
-    # ── MLflow 추적 종료 ──
-    if use_mlflow:
-        import mlflow
-        mlflow.log_metrics(metrics)
-        if best_params:
-            for k, v in best_params.items():
-                mlflow.log_param(f"optuna_{k}", v)
-        if best_threshold is not None:
-            mlflow.log_param("best_threshold", best_threshold)
-        mlflow.end_run()
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -404,7 +442,7 @@ def main() -> None:
     if args.split_holdout is not None:
         run_split_holdout(config, args.split_holdout, logger)
     elif args.final_eval:
-        run_final_eval(config, logger)
+        run_final_eval(config, args, logger)
     else:
         run_development(config, args, logger)
 

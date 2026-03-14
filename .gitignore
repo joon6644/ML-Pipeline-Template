@@ -36,6 +36,10 @@ catboost_info/
 # ===== Jupyter Notebook =====
 .ipynb_checkpoints/
 
+# ===== MLflow & Testing =====
+mlruns/
+.pytest_cache/
+
 # ===== IDE & OS =====
 .idea/
 .vscode/
